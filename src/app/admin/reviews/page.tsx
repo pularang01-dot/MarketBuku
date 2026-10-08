@@ -1,0 +1,7 @@
+import { createSupabaseAdmin } from "@/lib/supabase/server";
+import { moderateReview } from "@/actions/admin";
+export default async function AdminReviews() {
+  const { data } = await createSupabaseAdmin().from("reviews").select("id,rating,body,status,book:books(title),profiles(full_name), review_images(path)").order("created_at", { ascending: false }).limit(50);
+  return (<><h1 className="mb-4 text-3xl font-bold">Moderasi Ulasan</h1><ul className="space-y-2">{data?.map((r) => <li key={r.id} className="card p-3 text-sm"><p><strong>{(r.book as unknown as { title: string }).title}</strong> · {"★".repeat(r.rating)} · {(r.profiles as unknown as { full_name: string }).full_name} · <em>{r.status}</em></p><p className="my-1 text-ink-soft">{r.body}</p>{(r.review_images as unknown as { path: string }[] | null)?.map((im) => <a key={im.path} className="mr-2 text-brand underline" href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/review-images/${im.path}`} target="_blank" rel="noreferrer">Lihat foto</a>)}
+    <div className="flex gap-2">{(["APPROVED", "HIDDEN", "DELETE"] as const).map((s) => <form key={s} action={moderateReview.bind(null, r.id, s)}><button className={s === "DELETE" ? "btn-ghost !text-danger" : "btn-ghost"}>{s === "APPROVED" ? "Setujui" : s === "HIDDEN" ? "Sembunyikan" : "Hapus"}</button></form>)}</div></li>)}{!data?.length && <li className="text-ink-mute">Belum ada ulasan.</li>}</ul></>);
+}

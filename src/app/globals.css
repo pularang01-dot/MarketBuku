@@ -1,0 +1,37 @@
+@import "leaflet/dist/leaflet.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html { scroll-padding-top: 7rem; scroll-behavior: smooth; }
+body { @apply bg-paper font-sans text-ink antialiased; }
+h1, h2, h3 { @apply font-serif font-semibold tracking-tight text-brand-dark; }
+:focus-visible { outline: 2px solid #F2A900; outline-offset: 2px; border-radius: 6px; }
+::placeholder { color: #75849A; }
+
+@layer components {
+  .btn { @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-ctl px-5 text-sm font-semibold transition active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply btn bg-brand text-white hover:bg-brand-dark active:bg-brand-deeper; }
+  .btn-accent { @apply btn bg-brand text-white hover:bg-brand-dark active:bg-brand-deeper; }
+  .btn-ghost { @apply btn border border-brand bg-white text-brand hover:bg-brand-light; }
+  .btn-subtle { @apply btn bg-transparent text-ink-soft hover:bg-surface-muted hover:text-brand; }
+  .input { @apply min-h-[44px] w-full rounded-ctl border border-line bg-white px-3.5 text-sm text-ink placeholder:text-ink-mute focus:border-brand; }
+  textarea.input { @apply py-2.5; }
+  .label { @apply mb-1.5 block text-sm font-medium text-ink; }
+  .card { @apply rounded-card border border-line bg-surface; }
+  .panel { @apply rounded-card bg-brand-light/60; }
+  .badge { @apply inline-flex items-center rounded-pill px-2.5 py-0.5 text-[11px] font-bold tracking-wide; }
+  .chip { @apply inline-flex min-h-[32px] items-center gap-1 rounded-pill border border-line bg-white px-3 text-sm text-ink-soft transition hover:border-brand hover:text-brand; }
+  .chip-active { @apply border-brand bg-brand-light font-medium text-brand; }
+  .field-error { @apply mt-1 text-xs text-danger; }
+  .section-title { @apply text-2xl; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* Leaflet map pin (CSS-only, avoids bundler issues with default marker images) */
+.map-pin span { display: block; width: 28px; height: 28px; border-radius: 50% 50% 50% 0; background: #B42318; transform: rotate(-45deg); border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+.leaflet-container { font-family: inherit; z-index: 0; }
+
+/* design system: headings are semibold even where legacy classes say font-bold */
+:where(h1, h2, h3)[class*="font-bold"] { font-weight: 600; }
