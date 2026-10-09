@@ -5,6 +5,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { loginSchema, registerSchema, forgotSchema, resetSchema } from "@/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { getSiteUrl } from "@/lib/site-url";
+import { describeAuthError } from "@/lib/auth/errors";
 import { mergeGuestCart } from "./cart";
 import { sendEmail } from "@/lib/email";
 import type { ActionState } from "@/types";
@@ -36,7 +37,7 @@ export async function register(_: ActionState, fd: FormData): Promise<ActionStat
     email: p.data.email, password: p.data.password,
     options: { data: { full_name: p.data.full_name }, emailRedirectTo: `${site}/auth/confirm` },
   });
-  if (error) return { ok: false, message: "Pendaftaran gagal. Email mungkin sudah terdaftar atau kata sandi terlalu lemah." };
+  if (error) return { ok: false, message: describeAuthError(error, "register") };
   await sendEmail(p.data.email, "registration", { name: p.data.full_name });
   if (!data.session) return { ok: true, message: "CONFIRM_EMAIL" }; // UI shows the "Cek emailmu" panel
   await mergeGuestCart();
@@ -48,7 +49,8 @@ export async function resendConfirmation(_: ActionState, fd: FormData): Promise<
   const p = forgotSchema.safeParse(Object.fromEntries(fd));
   if (!p.success) return { ok: false, errors: p.error.flatten().fieldErrors };
   const supabase = await createSupabaseServer();
-  await supabase.auth.resend({ type: "signup", email: p.data.email, options: { emailRedirectTo: `${await getSiteUrl()}/auth/confirm` } });
+  const { error } = await supabase.auth.resend({ type: "signup", email: p.data.email, options: { emailRedirectTo: `${await getSiteUrl()}/auth/confirm` } });
+  if (error) return { ok: false, message: describeAuthError(error, "resend") };
   return { ok: true, message: "Jika email terdaftar dan belum dikonfirmasi, tautan baru sudah dikirim. Periksa juga folder spam." }; // same answer either way
 }
 
@@ -57,7 +59,8 @@ export async function forgotPassword(_: ActionState, fd: FormData): Promise<Acti
   const p = forgotSchema.safeParse(Object.fromEntries(fd));
   if (!p.success) return { ok: false, errors: p.error.flatten().fieldErrors };
   const supabase = await createSupabaseServer();
-  await supabase.auth.resetPasswordForEmail(p.data.email, { redirectTo: `${await getSiteUrl()}/auth/confirm?next=/reset-password` });
+  const { error } = await supabase.auth.resetPasswordForEmail(p.data.email, { redirectTo: `${await getSiteUrl()}/auth/confirm?next=/reset-password` });
+  if (error) return { ok: false, message: describeAuthError(error, "reset") }; // an unknown email does NOT raise an error, so this does not leak which emails exist
   return { ok: true, message: "Jika email terdaftar, tautan untuk mengatur ulang kata sandi sudah dikirim. Periksa juga folder spam." }; // same answer either way
 }
 
