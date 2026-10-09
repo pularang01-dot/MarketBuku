@@ -154,10 +154,11 @@ export async function saveCoupon(_: ActionState, fd: FormData): Promise<ActionSt
     code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{3,30}$/), type: z.enum(["PERCENT", "FIXED", "FREE_SHIPPING"]),
     value: z.coerce.number().int().min(0), min_purchase: z.coerce.number().int().min(0).default(0),
     usage_limit: z.coerce.number().int().min(1).optional(), per_user_limit: z.coerce.number().int().min(1).default(1),
-    ends_at: z.string().optional(),
+    ends_at: z.string().optional(), is_public: z.string().optional(),
   }).refine((d) => d.type !== "PERCENT" || d.value <= 100, { message: "Persen maksimal 100", path: ["value"] }).safeParse(Object.fromEntries(Array.from(fd).map(([k, v]) => [k, v === "" ? undefined : v])));
   if (!s.success) return { ok: false, errors: s.error.flatten().fieldErrors };
-  const { error } = await createSupabaseAdmin().from("coupons").insert({ ...s.data, ends_at: s.data.ends_at ? new Date(s.data.ends_at).toISOString() : null });
+  const { is_public, ...rest } = s.data;
+  const { error } = await createSupabaseAdmin().from("coupons").insert({ ...rest, is_public: is_public === "on", ends_at: rest.ends_at ? new Date(rest.ends_at).toISOString() : null });
   if (error) return { ok: false, message: error.code === "23505" ? "Kode sudah ada." : "Gagal menyimpan." };
   await audit(admin.id, "coupon.create", "coupons", s.data.code);
   revalidatePath("/admin/coupons");

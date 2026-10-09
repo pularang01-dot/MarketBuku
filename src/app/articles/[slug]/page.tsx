@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { jsonLd, SITE_URL } from "@/lib/utils";
 import Image from "next/image";
+import { Breadcrumb } from "@/components/breadcrumb";
 import { BookGrid } from "@/components/book-card";
 import { BOOK_SELECT, type BookRow } from "@/types";
 
@@ -18,5 +19,5 @@ export default async function Article({ params }: { params: Promise<{ slug: stri
   const { data: rel } = a.related_book_ids?.length ? await supabase.from("books").select(BOOK_SELECT).in("id", a.related_book_ids).eq("status", "PUBLISHED") : { data: [] };
   const ld = { "@context": "https://schema.org", "@type": "Article", headline: a.title, datePublished: a.published_at, author: { "@type": "Person", name: a.author_name }, mainEntityOfPage: `${SITE_URL}/articles/${a.slug}` };
   // Content is rendered as escaped plain-text paragraphs (no raw HTML) => no XSS surface.
-  return (<article className="mx-auto max-w-2xl">{a.cover_url && <div className="relative mb-4 aspect-[16/9] overflow-hidden rounded-card"><Image src={a.cover_url} alt="" fill sizes="672px" className="object-cover" priority /></div>}<h1 className="text-4xl font-bold">{a.title}</h1><p className="mt-1 text-sm text-ink-mute">{a.author_name} · {a.published_at && new Date(a.published_at).toLocaleDateString("id-ID", { dateStyle: "long" })}</p><div className="mt-6 space-y-4 text-lg leading-relaxed">{a.content.split(/\n{2,}/).map((p: string, i: number) => <p key={i}>{p}</p>)}</div>{!!rel?.length && <section className="mt-10"><h2 className="mb-3 text-2xl font-bold">Buku yang disebut di artikel ini</h2><BookGrid books={rel as unknown as BookRow[]} /></section>}<script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(ld) }} /></article>);
+  return (<article className="mx-auto max-w-[720px]"><Breadcrumb crumbs={[{ href: "/", label: "Beranda" }, { href: "/articles", label: "Artikel" }, { label: a.title }]} />{a.cover_url && <div className="relative mb-4 aspect-[16/9] overflow-hidden rounded-card"><Image src={a.cover_url} alt="" fill sizes="672px" className="object-cover" priority /></div>}<span className="badge bg-brand-light text-brand">{a.category ?? "Artikel"}</span><h1 className="mt-3 text-4xl leading-tight">{a.title}</h1><p className="mt-1 text-sm text-ink-mute">{a.author_name} · {a.published_at && new Date(a.published_at).toLocaleDateString("id-ID", { dateStyle: "long" })}</p><div className="mt-6 space-y-5 font-serif text-lg leading-[30px] text-ink-soft">{a.content.split(/\n{2,}/).map((p: string, i: number) => <p key={i}>{p}</p>)}</div>{!!rel?.length && <section className="mt-10"><h2 className="mb-3 text-2xl font-bold">Buku yang disebut di artikel ini</h2><BookGrid books={rel as unknown as BookRow[]} /></section>}<script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(ld) }} /></article>);
 }

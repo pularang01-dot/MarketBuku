@@ -7,7 +7,7 @@ const NAV = [
   { href: "/books", label: "Katalog", match: (p: string, s: string) => p.startsWith("/books") && !s },
   { href: "/books?sort=popular", label: "Terlaris", match: (_: string, s: string) => s.includes("sort=popular") },
   { href: "/books?sort=newest", label: "Terbaru", match: (_: string, s: string) => s.includes("sort=newest") },
-  { href: "/promo", label: "Promo", match: (p: string) => p.startsWith("/promo") },
+  { href: "/promo", label: "Promo", match: (p: string) => p === "/promo" },
   { href: "/bundles", label: "Paket Edukasi", match: (p: string) => p.startsWith("/bundles") },
   { href: "/book-finder", label: "Cari Buku", match: (p: string) => p.startsWith("/book-finder") },
   { href: "/articles", label: "Artikel", match: (p: string) => p.startsWith("/articles") },
