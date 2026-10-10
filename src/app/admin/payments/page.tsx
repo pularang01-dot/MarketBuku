@@ -9,12 +9,17 @@ import { BankForm } from "@/components/bank-form";
 import { ConfirmButton } from "@/components/row-actions";
 import { toggleBankAccount, deleteBankAccount } from "@/actions/payment";
 import { formatRupiah } from "@/lib/utils";
+import { sweepExpiredOrders } from "@/lib/expiry";
 
 export const metadata = { title: "Verifikasi Pembayaran" };
 const TABS = ["verify", "waiting", "history", "banks"] as const;
 
-export default async function AdminPayments({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+export default async function AdminPayments({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string; from?: string; to?: string }> }) {
   const sp = await searchParams;
+  await sweepExpiredOrders();
+  const q = (sp.q ?? "").replace(/[%_,()\\*]/g, "").trim().slice(0, 40);
+  const dateOk = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "");
+  const from = dateOk(sp.from), to = dateOk(sp.to);
   const tab = (TABS as readonly string[]).includes(sp.tab ?? "") ? sp.tab! : "verify";
   const db = createSupabaseAdmin();
   const [pendingC, waitingRows, banksC] = await Promise.all([
@@ -29,7 +34,11 @@ export default async function AdminPayments({ searchParams }: { searchParams: Pr
 
   let body: React.ReactNode = null;
   if (tab === "verify") {
-    const { data: proofs } = await db.from("payment_proofs").select("id, file_path, sender_name, sender_bank, amount, transfer_date, note, created_at, orders(id, order_number, total, expires_at, shipping_address)").eq("status", "PENDING").order("created_at");
+    let pq = db.from("payment_proofs").select("id, file_path, sender_name, sender_bank, amount, transfer_date, note, created_at, orders!inner(id, order_number, total, expires_at, shipping_address)").eq("status", "PENDING").order("created_at");
+    if (q) pq = pq.ilike("orders.order_number", `%${q}%`);
+    if (from) pq = pq.gte("created_at", from);
+    if (to) pq = pq.lte("created_at", `${to}T23:59:59`);
+    const { data: proofs } = await pq;
     const list = await Promise.all((proofs ?? []).map(async (p) => ({ ...p, url: (await db.storage.from("payment-proofs").createSignedUrl(p.file_path, 600)).data?.signedUrl ?? null })));
     body = !list.length ? <p className="card p-8 text-center text-sm text-ink-mute">Tidak ada bukti yang menunggu verifikasi.</p> : (
       <div className="space-y-5">{list.map((p) => { const o = p.orders as unknown as { id: string; order_number: string; total: number; expires_at: string; shipping_address: { recipient_name: string } }; const isPdf = p.file_path.endsWith(".pdf"); const diff = p.amount - o.total;
@@ -51,7 +60,11 @@ export default async function AdminPayments({ searchParams }: { searchParams: Pr
   } else if (tab === "waiting") {
     body = <section className="card divide-y divide-line text-sm">{noProof.map((o) => <div key={o.id} className="flex flex-wrap items-center justify-between gap-3 p-4"><span><span className="font-mono text-xs font-bold">#{o.order_number}</span><br /><span className="text-ink-soft">{formatRupiah(o.total)} · batas bayar {new Date(o.expires_at).toLocaleString("id-ID")}</span></span><MarkPaidButton orderId={o.id} total={o.total} /></div>)}{!noProof.length && <p className="p-6 text-center text-ink-mute">Tidak ada pesanan yang menunggu pembayaran tanpa bukti.</p>}</section>;
   } else if (tab === "history") {
-    const { data: done } = await db.from("payment_proofs").select("id, status, reject_reason, amount, reviewed_at, orders(order_number, shipping_address), profiles:reviewed_by(full_name)").neq("status", "PENDING").order("reviewed_at", { ascending: false }).limit(50);
+    let hq = db.from("payment_proofs").select("id, status, reject_reason, amount, reviewed_at, orders!inner(order_number, shipping_address), profiles:reviewed_by(full_name)").neq("status", "PENDING").order("reviewed_at", { ascending: false }).limit(50);
+    if (q) hq = hq.ilike("orders.order_number", `%${q}%`);
+    if (from) hq = hq.gte("reviewed_at", from);
+    if (to) hq = hq.lte("reviewed_at", `${to}T23:59:59`);
+    const { data: done } = await hq;
     body = <section className="card overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-brand-light/60 text-xs uppercase tracking-wide text-ink-soft"><tr><th className="px-5 py-3">Pesanan</th><th>Nominal</th><th>Keputusan</th><th>Waktu</th><th>Verifikator</th></tr></thead><tbody>
       {done?.map((d) => { const o = d.orders as unknown as { order_number: string; shipping_address: { recipient_name: string } }; return <tr key={d.id} className="border-t border-line"><td className="px-5 py-3"><span className="font-mono text-xs font-bold">#{o?.order_number}</span><br /><span className="text-xs text-ink-mute">{o?.shipping_address?.recipient_name}</span></td><td className="font-semibold">{formatRupiah(d.amount)}</td><td><span className={`badge ${d.status === "APPROVED" ? "bg-leaf-light text-leaf" : "bg-danger-light text-danger"}`}>{d.status === "APPROVED" ? "Disetujui" : "Ditolak"}</span>{d.reject_reason && <span className="block text-xs text-ink-mute">{d.reject_reason}</span>}</td><td className="text-ink-soft">{d.reviewed_at && new Date(d.reviewed_at).toLocaleString("id-ID")}</td><td>{(d.profiles as unknown as { full_name: string } | null)?.full_name ?? "—"}</td></tr>; })}
       {!done?.length && <tr><td colSpan={5} className="p-6 text-center text-ink-mute">Belum ada riwayat.</td></tr>}</tbody></table></section>;
@@ -67,6 +80,13 @@ export default async function AdminPayments({ searchParams }: { searchParams: Pr
     <>
       <AdminPageHeader eyebrow="Kas & Perbankan" title="Verifikasi Pembayaran & Mutasi" subtitle="Cocokkan bukti transfer dengan mutasi rekening sebelum menyetujui. Menyetujui mengubah pesanan menjadi Dibayar dan memotong stok." />
       <TabNav label="Bagian pembayaran" tabs={tabs} active={`/admin/payments?tab=${tab}`} />
+      {(tab === "verify" || tab === "history") && (
+        <form className="card mb-4 flex flex-wrap items-end gap-3 p-3"><input type="hidden" name="tab" value={tab} />
+          <div><label htmlFor="q" className="label !mb-1 text-xs">No. pesanan</label><input id="q" name="q" defaultValue={q} placeholder="TBE-..." className="input !w-48" /></div>
+          <div><label htmlFor="from" className="label !mb-1 text-xs">Dari tanggal</label><input id="from" name="from" type="date" defaultValue={from} className="input !w-44" /></div>
+          <div><label htmlFor="to" className="label !mb-1 text-xs">Sampai tanggal</label><input id="to" name="to" type="date" defaultValue={to} className="input !w-44" /></div>
+          <button className="btn-primary">Terapkan</button>{(q || from || to) && <Link href={`/admin/payments?tab=${tab}`} className="btn-subtle">Reset</Link>}</form>
+      )}
       {body}
     </>
   );

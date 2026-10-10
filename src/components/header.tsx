@@ -16,7 +16,7 @@ export async function Header() {
   const count = cart.lines.reduce((s, l) => s + l.quantity, 0);
   const iconBtn = "relative flex h-11 items-center gap-1.5 rounded-ctl border border-line bg-white px-3 text-sm text-ink-soft hover:border-brand hover:text-brand";
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-white">
+    <header className="sticky top-0 z-40 border-b border-line bg-white print:hidden">
       <div className="bg-brand-light text-xs text-ink-soft">
         <div className="mx-auto flex max-w-page items-center justify-between gap-4 px-4 py-1.5 sm:px-6">
           <p role="note" className="truncate">{announcement}</p>

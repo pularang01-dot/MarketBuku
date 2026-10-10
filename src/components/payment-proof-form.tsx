@@ -17,7 +17,7 @@ export function PaymentProofForm({ orderId, total }: { orderId: string; total: n
         <Field name="transfer_date" label="Tanggal transfer" type="date" state={state} />
       </div>
       <Field name="note" label="Catatan tambahan (opsional)" state={state} />
-      <FileDrop name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" label="Berkas struk / tangkapan layar *" error={state?.errors?.proof?.[0]} />
+      <FileDrop name="proof" accept="image/jpeg,image/png,image/webp" label="Foto / tangkapan layar bukti transfer *" error={state?.errors?.proof?.[0]} />
       <Msg state={state} /><Submit className="btn-primary w-full">Kirim Bukti Pembayaran</Submit>
     </form>
   );

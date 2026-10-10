@@ -23,4 +23,5 @@ export async function validateUpload(file: File, rule: UploadRule): Promise<{ ok
 
 export const randomName = (ext: string) => `${crypto.randomUUID()}.${ext}`;
 
-export const PROOF_RULE: UploadRule = { mimes: [...IMAGE_MIME, "application/pdf"], maxBytes: 5 * 1024 * 1024 };
+/** Payment proofs: images only (JPEG/PNG/WebP), max 5 MB. Validated on the server by MIME + magic bytes. */
+export const PROOF_RULE: UploadRule = { mimes: IMAGE_MIME, maxBytes: 5 * 1024 * 1024 };

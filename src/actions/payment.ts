@@ -29,10 +29,10 @@ export async function submitPaymentProof(_: ActionState, fd: FormData): Promise<
   if (order.status !== "PENDING_PAYMENT") return { ok: false, message: "Pesanan ini tidak sedang menunggu pembayaran." };
 
   const { count } = await supabase.from("payment_proofs").select("id", { count: "exact", head: true }).eq("order_id", order.id).eq("status", "PENDING");
-  if ((count ?? 0) >= 3) return { ok: false, message: "Sudah ada bukti yang menunggu verifikasi. Mohon tunggu admin memeriksanya." };
+  if ((count ?? 0) >= 1) return { ok: false, message: "Bukti sebelumnya masih menunggu verifikasi. Mohon tunggu admin memeriksanya." };
 
   const file = fd.get("proof");
-  if (!(file instanceof File) || file.size === 0) return { ok: false, errors: { proof: ["Unggah bukti transfer (JPG/PNG/WebP/PDF, maks 5 MB)"] } };
+  if (!(file instanceof File) || file.size === 0) return { ok: false, errors: { proof: ["Unggah foto/tangkapan layar bukti transfer (JPG, PNG, atau WebP, maks 5 MB)"] } };
   const v = await validateUpload(file, PROOF_RULE);
   if (!v.ok) return { ok: false, errors: { proof: [v.error] } };
 
@@ -45,13 +45,18 @@ export async function submitPaymentProof(_: ActionState, fd: FormData): Promise<
     order_id: order.id, user_id: user.id, file_path: path, sender_name: p.data.sender_name, sender_bank: p.data.sender_bank ?? null,
     amount: p.data.amount, transfer_date: p.data.transfer_date ?? null, note: p.data.note ?? null,
   });
-  if (error) { await db.storage.from("payment-proofs").remove([path]); return { ok: false, message: "Gagal menyimpan bukti." }; }
+  if (error) {
+    await db.storage.from("payment-proofs").remove([path]); // do not leave an orphan file behind
+    return { ok: false, message: error.code === "23505" ? "Bukti sebelumnya masih menunggu verifikasi." : "Gagal menyimpan bukti. Silakan coba lagi." };
+  }
+  await db.from("notifications").insert({ user_id: user.id, type: "payment", title: "Bukti pembayaran diterima", body: `Pesanan ${order.order_number} menunggu verifikasi admin.`, link: `/orders/${order.id}` });
+  if (user.email) await sendEmail(user.email, "proof_submitted", { order: order.order_number });
 
   // notify admins (in-app)
   const { data: admins } = await db.from("profiles").select("id").in("role", ["ADMIN", "SUPER_ADMIN"]);
   if (admins?.length) await db.from("notifications").insert(admins.map((a) => ({ user_id: a.id, type: "payment", title: `Bukti bayar baru: ${order.order_number}`, link: "/admin/payments" })));
   revalidatePath(`/orders/${order.id}`); revalidatePath(`/orders/${order.id}/pay`);
-  return { ok: true, message: "Bukti terkirim. Admin akan memverifikasi pembayaranmu." };
+  return { ok: true, message: "Bukti pembayaran berhasil dikirim dan sedang menunggu verifikasi. Pesanan akan diproses setelah dana dikonfirmasi oleh tim kami." };
 }
 
 /* ---------------- admin: verify ---------------- */
@@ -96,11 +101,22 @@ export async function rejectProof(proofId: string, reason: string) {
   const db = createSupabaseAdmin();
   const { data: proof } = await db.from("payment_proofs").select("id, order_id, user_id, status").eq("id", proofId).maybeSingle();
   if (!proof || proof.status !== "PENDING") return { ok: false, message: "Bukti sudah diproses." };
-  await db.from("payment_proofs").update({ status: "REJECTED", reject_reason: r.slice(0, 200), reviewed_by: admin.id, reviewed_at: new Date().toISOString() }).eq("id", proofId).eq("status", "PENDING");
+  const { data: order } = await db.from("orders").select("status, order_number, expires_at").eq("id", proof.order_id).single();
+  if (!order || order.status !== "PENDING_PAYMENT") return { ok: false, message: "Pesanan ini sudah tidak menunggu pembayaran (sudah lunas atau dibatalkan), jadi bukti tidak dapat ditolak." };
+
+  const { data: updated } = await db.from("payment_proofs").update({ status: "REJECTED", reject_reason: r.slice(0, 200), reviewed_by: admin.id, reviewed_at: new Date().toISOString() }).eq("id", proofId).eq("status", "PENDING").select("id");
+  if (!updated?.length) return { ok: false, message: "Bukti sudah diproses oleh admin lain." };
+
+  // give the buyer a fair window to upload a corrected proof: expiry is never earlier than 24h from the rejection
+  const floor = new Date(Date.now() + 24 * 3_600_000).toISOString();
+  if (new Date(order.expires_at).toISOString() < floor) await db.from("orders").update({ expires_at: floor }).eq("id", proof.order_id).eq("status", "PENDING_PAYMENT");
+
   await db.from("notifications").insert({ user_id: proof.user_id, type: "payment", title: "Bukti pembayaran ditolak", body: r.slice(0, 200), link: `/orders/${proof.order_id}/pay` });
+  const { data: u } = await db.auth.admin.getUserById(proof.user_id);
+  if (u.user?.email) await sendEmail(u.user.email, "proof_rejected", { order: order.order_number, reason: r.slice(0, 200) });
   await audit(admin.id, "payment.reject", "orders", proof.order_id, { proofId, reason: r });
   revalidatePath("/admin/payments");
-  return { ok: true, message: "Bukti ditolak. Pelanggan bisa mengunggah ulang." };
+  return { ok: true, message: "Bukti ditolak. Pembeli dapat mengunggah ulang." };
 }
 
 /** Mark paid without a proof (e.g. verified directly in the bank statement). Always audited. */

@@ -5,7 +5,7 @@ const col = (title: string, links: [string, string][]) => (
 );
 export function Footer() {
   return (
-    <footer className="mt-16 border-t border-line bg-white">
+    <footer className="mt-16 border-t border-line bg-white print:hidden">
       <div className="mx-auto grid max-w-page gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div><p className="flex items-center gap-2.5 font-serif text-xl font-semibold text-brand-dark"><span className="grid h-9 w-9 place-items-center rounded-ctl bg-brand text-white"><BookOpen aria-hidden className="h-5 w-5" /></span>Toko Buku Edukasi</p>
           <p className="mt-3 max-w-xs text-sm leading-relaxed text-ink-soft">Toko buku pelajaran, latihan soal, persiapan ujian, dan referensi guru untuk siswa SD, SMP, dan SMA.</p></div>

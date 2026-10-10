@@ -1,7 +1,7 @@
 import "server-only";
 import { env } from "@/lib/env";
 
-export type EmailEvent = "registration" | "order_created" | "payment_success" | "order_shipped" | "order_completed" | "password_reset" | "promotion";
+export type EmailEvent = "registration" | "order_created" | "proof_submitted" | "proof_rejected" | "payment_success" | "order_shipped" | "order_completed" | "password_reset" | "promotion";
 export interface EmailMessage { to: string; event: EmailEvent; subject: string; html: string }
 export interface EmailProvider { send(m: EmailMessage): Promise<void> }
 
@@ -9,9 +9,13 @@ class ConsoleEmailProvider implements EmailProvider {
   async send(m: EmailMessage) { console.info(`[email:console] ${m.event} -> ${m.to}: ${m.subject}`); }
 }
 
+const esc = (v?: string) => (v ?? "-").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
 const templates: Record<EmailEvent, (d: Record<string, string>) => { subject: string; html: string }> = {
   registration: (d) => ({ subject: "Selamat datang di Toko Buku Edukasi", html: `<p>Halo ${d.name}, akunmu sudah aktif.</p>` }),
   order_created: (d) => ({ subject: `Pesanan ${d.order} dibuat`, html: `<p>Selesaikan pembayaran sebelum 24 jam.</p>` }),
+  proof_submitted: (d) => ({ subject: `Bukti pembayaran ${d.order} diterima`, html: `<p>Bukti pembayaranmu sudah kami terima dan sedang menunggu verifikasi admin. Pesanan diproses setelah dana dikonfirmasi.</p>` }),
+  proof_rejected: (d) => ({ subject: `Bukti pembayaran ${d.order} ditolak`, html: `<p>Bukti pembayaranmu belum dapat diterima. Alasan: ${esc(d.reason)}. Silakan unggah ulang bukti yang benar dari halaman pesanan.</p>` }),
   payment_success: (d) => ({ subject: `Pembayaran ${d.order} diterima`, html: `<p>Terima kasih! Pesananmu segera kami proses.</p>` }),
   order_shipped: (d) => ({ subject: `Pesanan ${d.order} dikirim`, html: `<p>Resi: ${d.tracking ?? "-"}</p>` }),
   order_completed: (d) => ({ subject: `Pesanan ${d.order} selesai`, html: `<p>Bagikan ulasanmu tentang buku yang kamu beli.</p>` }),

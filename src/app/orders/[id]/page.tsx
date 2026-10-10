@@ -10,16 +10,23 @@ import { reorder } from "@/actions/orders";
 import { getShippingProvider } from "@/lib/shipping";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { StatusBadge } from "@/components/status-badge";
+import { PaymentBadge, PaymentTimeline } from "@/components/payment-timeline";
+import { paymentPhase, timeline, type ProofLike } from "@/lib/payment-state";
+import { sweepExpiredOrders } from "@/lib/expiry";
 
 export const metadata: Metadata = { title: "Detail Pesanan", robots: { index: false } };
 
 export default async function OrderDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   await requireUser(`/orders/${id}`);
+  await sweepExpiredOrders();
   const supabase = await createSupabaseServer();
   const { data: o } = await supabase.from("orders").select("*, order_items(*), order_events(*), payments(redirect_url,status,provider), payment_proofs(status,reject_reason,created_at), shipments(tracking_number,courier)").eq("id", id).maybeSingle(); // RLS scopes to owner
   if (!o) notFound();
   const pending = o.status === "PENDING_PAYMENT";
+  const proofList = (o.payment_proofs ?? []) as ProofLike[];
+  const phase = paymentPhase(o.status, proofList);
+  const steps = timeline(o, proofList);
   const trackNo = o.shipments?.tracking_number as string | undefined;
   let tracking: { status: string; history: { at: string; note: string }[] } | null = null;
   if (trackNo && o.shipping_courier) { try { tracking = await getShippingProvider().getTracking(trackNo, o.shipping_courier); } catch { tracking = null; } }
@@ -30,7 +37,8 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
   return (
     <div className="space-y-5">
       <div><Breadcrumb crumbs={[{ href: "/", label: "Beranda" }, { href: "/orders", label: "Pesanan Saya" }, { label: o.order_number }]} />
-        <div className="flex flex-wrap items-center gap-3"><h1 className="text-3xl">Pesanan {o.order_number}</h1><StatusBadge status={o.status} /></div>
+        <div className="flex flex-wrap items-center gap-3"><h1 className="text-3xl">Pesanan {o.order_number}</h1></div>
+        <div className="mt-2 flex flex-wrap gap-4 text-sm"><span className="flex items-center gap-2"><span className="text-ink-mute">Status pesanan</span><StatusBadge status={o.status} /></span><span className="flex items-center gap-2"><span className="text-ink-mute">Status pembayaran</span><PaymentBadge phase={phase} /></span></div>
         <p className="mt-1 text-sm text-ink-soft">Dibuat {new Date(o.created_at).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}</p></div>
 
       {pending && pay?.redirect_url && <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-marigold-light p-4 text-marigold-dark"><p className="text-sm"><strong>Menunggu pembayaran.</strong> Selesaikan sebelum {new Date(o.expires_at).toLocaleString("id-ID")}.</p><Link href={pay.redirect_url} className="btn-primary">{pay.provider === "manual" ? "Bayar & Unggah Bukti" : "Bayar Sekarang"}</Link></div>}
@@ -46,6 +54,8 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
             {addr.latitude && <a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand underline" target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${addr.latitude},${addr.longitude}`}><MapPin aria-hidden className="h-4 w-4" />Lihat titik di peta</a>}
             {trackNo && <p className="mt-3 rounded-card bg-paper p-3 text-sm">Nomor resi: <strong className="font-mono">{trackNo}</strong>{o.shipping_courier ? ` (${o.shipping_courier})` : ""}</p>}
             {tracking && <div className="mt-3"><p className="text-sm font-semibold">Pelacakan: {tracking.status}</p><ul className="mt-1 space-y-1 text-sm text-ink-soft">{tracking.history.map((h, i) => <li key={i}>{h.at} — {h.note}</li>)}</ul></div>}</section>}
+
+          <section className="card p-5"><h2 className="text-xl">Tahapan Pesanan</h2><div className="mt-4"><PaymentTimeline steps={steps} /></div></section>
 
           <section className="card p-5"><h2 className="text-xl">Riwayat Status</h2>
             <ol className="mt-4 space-y-4 border-l-2 border-line pl-5">{events.map((e, i) => <li key={e.id} className="relative"><span className={`absolute -left-[27px] top-1 h-3 w-3 rounded-full border-2 border-white ${i === events.length - 1 ? "bg-brand" : "bg-line"}`} /><p className="text-sm font-semibold">{STATUS_LABEL[e.to_status]}</p><p className="text-xs text-ink-mute">{new Date(e.created_at).toLocaleString("id-ID")}</p></li>)}</ol></section>
