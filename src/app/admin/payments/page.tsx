@@ -16,7 +16,7 @@ const TABS = ["verify", "waiting", "history", "banks"] as const;
 
 export default async function AdminPayments({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string; from?: string; to?: string }> }) {
   const sp = await searchParams;
-  await sweepExpiredOrders();
+  await sweepExpiredOrders({ force: true });
   const q = (sp.q ?? "").replace(/[%_,()\\*]/g, "").trim().slice(0, 40);
   const dateOk = (d?: string) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "");
   const from = dateOk(sp.from), to = dateOk(sp.to);
@@ -58,7 +58,16 @@ export default async function AdminPayments({ searchParams }: { searchParams: Pr
             </div>
           </article>); })}</div>);
   } else if (tab === "waiting") {
-    body = <section className="card divide-y divide-line text-sm">{noProof.map((o) => <div key={o.id} className="flex flex-wrap items-center justify-between gap-3 p-4"><span><span className="font-mono text-xs font-bold">#{o.order_number}</span><br /><span className="text-ink-soft">{formatRupiah(o.total)} · batas bayar {new Date(o.expires_at).toLocaleString("id-ID")}</span></span><MarkPaidButton orderId={o.id} total={o.total} /></div>)}{!noProof.length && <p className="p-6 text-center text-ink-mute">Tidak ada pesanan yang menunggu pembayaran tanpa bukti.</p>}</section>;
+    const since7 = new Date(Date.now() - 7 * 864e5).toISOString();
+    const { data: expired } = await db.from("order_events").select("created_at, orders!inner(order_number, total)").eq("to_status", "CANCELLED").eq("note", "expired").gte("created_at", since7).order("created_at", { ascending: false }).limit(20);
+    const remaining = (iso: string) => { const ms = new Date(iso).getTime() - Date.now(); return ms <= 0 ? "lewat batas" : `sisa ${Math.floor(ms / 3_600_000)} jam ${Math.floor((ms % 3_600_000) / 60_000)} menit`; };
+    body = (
+      <div className="space-y-6">
+        <section className="card divide-y divide-line text-sm">{noProof.map((o) => <div key={o.id} className="flex flex-wrap items-center justify-between gap-3 p-4"><span><span className="font-mono text-xs font-bold">#{o.order_number}</span><br /><span className="text-ink-soft">{formatRupiah(o.total)} · batas bayar {new Date(o.expires_at).toLocaleString("id-ID")} <span className="badge ml-1 bg-marigold-light text-marigold-dark">{remaining(o.expires_at)}</span></span></span><MarkPaidButton orderId={o.id} total={o.total} /></div>)}{!noProof.length && <p className="p-6 text-center text-ink-mute">Tidak ada pesanan yang menunggu pembayaran tanpa bukti.</p>}</section>
+        <p className="panel p-3 text-xs text-ink-soft">Pesanan yang melewati batas bayar dibatalkan <strong>otomatis</strong>: stok dilepas dan pembeli diberi tahu. Pesanan yang buktinya sedang menunggu verifikasi tidak dibatalkan otomatis.</p>
+        <section><h2 className="mb-2 text-lg">Dibatalkan otomatis (7 hari terakhir)</h2>
+          <div className="card divide-y divide-line text-sm">{expired?.map((e, i) => { const o = e.orders as unknown as { order_number: string; total: number }; return <div key={i} className="flex flex-wrap items-center justify-between gap-2 p-3"><span><span className="font-mono text-xs font-bold">#{o.order_number}</span> · {formatRupiah(o.total)}</span><span className="flex items-center gap-2"><span className="badge bg-surface-muted text-ink-soft">Dibatalkan — batas bayar terlewati</span><span className="text-xs text-ink-mute">{new Date(e.created_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}</span></span></div>; })}{!expired?.length && <p className="p-4 text-center text-ink-mute">Belum ada pembatalan otomatis.</p>}</div></section>
+      </div>);
   } else if (tab === "history") {
     let hq = db.from("payment_proofs").select("id, status, reject_reason, amount, reviewed_at, orders!inner(order_number, shipping_address), profiles:reviewed_by(full_name)").neq("status", "PENDING").order("reviewed_at", { ascending: false }).limit(50);
     if (q) hq = hq.ilike("orders.order_number", `%${q}%`);

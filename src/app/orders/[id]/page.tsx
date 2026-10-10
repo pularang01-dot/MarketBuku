@@ -21,7 +21,7 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
   await requireUser(`/orders/${id}`);
   await sweepExpiredOrders();
   const supabase = await createSupabaseServer();
-  const { data: o } = await supabase.from("orders").select("*, order_items(*), order_events(*), payments(redirect_url,status,provider), payment_proofs(status,reject_reason,created_at), shipments(tracking_number,courier)").eq("id", id).maybeSingle(); // RLS scopes to owner
+  const { data: o } = await supabase.from("orders").select("*, order_items(*), order_events(*), payments(redirect_url,status,provider), payment_proofs(status,reject_reason,created_at), shipments(tracking_number,courier,estimated_arrival,shipped_at)").eq("id", id).maybeSingle(); // RLS scopes to owner
   if (!o) notFound();
   const pending = o.status === "PENDING_PAYMENT";
   const proofList = (o.payment_proofs ?? []) as ProofLike[];
@@ -41,6 +41,9 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
         <div className="mt-2 flex flex-wrap gap-4 text-sm"><span className="flex items-center gap-2"><span className="text-ink-mute">Status pesanan</span><StatusBadge status={o.status} /></span><span className="flex items-center gap-2"><span className="text-ink-mute">Status pembayaran</span><PaymentBadge phase={phase} /></span></div>
         <p className="mt-1 text-sm text-ink-soft">Dibuat {new Date(o.created_at).toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" })}</p></div>
 
+      {o.status === "CANCELLED" && events.some((e) => e.to_status === "CANCELLED" && e.note === "expired") && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-surface-muted p-4 text-sm"><p><strong>Pesanan dibatalkan otomatis.</strong> Batas waktu pembayaran terlewati, jadi stok dilepas kembali. Kamu dapat membuat pesanan baru.</p><form action={reorder.bind(null, o.id)}><button className="btn-primary">Pesan lagi</button></form></div>
+      )}
       {pending && pay?.redirect_url && <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-marigold-light p-4 text-marigold-dark"><p className="text-sm"><strong>Menunggu pembayaran.</strong> Selesaikan sebelum {new Date(o.expires_at).toLocaleString("id-ID")}.</p><Link href={pay.redirect_url} className="btn-primary">{pay.provider === "manual" ? "Bayar & Unggah Bukti" : "Bayar Sekarang"}</Link></div>}
       {pending && latestProof && <p role="status" className="card p-3 text-sm">Bukti pembayaran terakhir: <strong>{latestProof.status === "PENDING" ? "menunggu verifikasi admin" : latestProof.status === "APPROVED" ? "disetujui" : "ditolak"}</strong>{latestProof.reject_reason ? ` — ${latestProof.reject_reason}` : ""}</p>}
 
@@ -52,7 +55,7 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
           {o.has_physical && <section className="card p-5"><h2 className="flex items-center gap-2 text-xl"><Truck aria-hidden className="h-5 w-5 text-brand" />Pengiriman</h2>
             <p className="mt-2 text-sm leading-relaxed">{addr.recipient_name} · {addr.phone}<br />{addr.address_line}, {addr.district}, {addr.city}, {addr.province} {addr.postal_code}</p>
             {addr.latitude && <a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand underline" target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${addr.latitude},${addr.longitude}`}><MapPin aria-hidden className="h-4 w-4" />Lihat titik di peta</a>}
-            {trackNo && <p className="mt-3 rounded-card bg-paper p-3 text-sm">Nomor resi: <strong className="font-mono">{trackNo}</strong>{o.shipping_courier ? ` (${o.shipping_courier})` : ""}</p>}
+            {trackNo && <div className="mt-3 space-y-1 rounded-card bg-paper p-3 text-sm"><p>Nomor resi: <strong className="font-mono">{trackNo}</strong>{o.shipping_courier ? ` (${o.shipping_courier})` : ""}</p>{o.shipments?.shipped_at && <p className="text-ink-soft">Dikirim: {new Date(o.shipments.shipped_at).toLocaleDateString("id-ID", { dateStyle: "long" })}</p>}{o.shipments?.estimated_arrival && !["DELIVERED", "COMPLETED"].includes(o.status) && <p className="font-semibold text-brand-dark">Perkiraan tiba: {new Date(`${o.shipments.estimated_arrival}T00:00:00`).toLocaleDateString("id-ID", { dateStyle: "full" })}</p>}<p className="text-xs text-ink-mute">Perkiraan tiba bersifat estimasi dan dapat berubah sesuai layanan kurir.</p></div>}
             {tracking && <div className="mt-3"><p className="text-sm font-semibold">Pelacakan: {tracking.status}</p><ul className="mt-1 space-y-1 text-sm text-ink-soft">{tracking.history.map((h, i) => <li key={i}>{h.at} — {h.note}</li>)}</ul></div>}</section>}
 
           <section className="card p-5"><h2 className="text-xl">Tahapan Pesanan</h2><div className="mt-4"><PaymentTimeline steps={steps} /></div></section>

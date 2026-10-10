@@ -7,7 +7,7 @@ import { requireAdmin, audit } from "@/lib/auth/session";
 import { bookSchema, stockSchema } from "@/schemas";
 import { slugify, uniqueSlug } from "@/lib/utils";
 import { validateUpload, IMAGE_RULE, PDF_RULE, randomName } from "@/lib/upload";
-import { canTransition, ADMIN_SETTABLE, type OrderStatus } from "@/lib/order-state";
+import { canTransition, allowedTransitions, ADMIN_SETTABLE, STATUS_LABEL, type OrderStatus } from "@/lib/order-state";
 import { getPaymentProvider } from "@/lib/payments";
 import { sendEmail } from "@/lib/email";
 import type { ActionState } from "@/types";
@@ -97,15 +97,24 @@ export async function adjustStock(_: ActionState, fd: FormData): Promise<ActionS
   return { ok: true, message: "Stok diperbarui." };
 }
 
-export async function updateOrderStatus(orderId: string, to: OrderStatus, tracking?: string) {
+export async function updateOrderStatus(orderId: string, to: OrderStatus, tracking?: string, estimatedArrival?: string) {
   const admin = await requireAdmin();
   if (!z.string().uuid().safeParse(orderId).success || !ADMIN_SETTABLE.includes(to)) return { ok: false, message: "Status tidak valid." };
   const db = createSupabaseAdmin();
-  const { data: o } = await db.from("orders").select("status, user_id, order_number, total").eq("id", orderId).single();
+  const { data: o } = await db.from("orders").select("status, user_id, order_number, total, has_physical").eq("id", orderId).single();
   if (!o) return { ok: false, message: "Order tidak ditemukan." };
   const from = o.status as OrderStatus;
-  if (!canTransition(from, to)) return { ok: false, message: `Tidak bisa dari ${from} ke ${to}.` };
+  if (!canTransition(from, to) || !allowedTransitions(from, o.has_physical).includes(to)) return { ok: false, message: `Pesanan berstatus ${STATUS_LABEL[from]} tidak dapat diubah ke ${STATUS_LABEL[to]}.` };
   if (to === "SHIPPED" && !tracking?.trim()) return { ok: false, message: "Nomor resi wajib diisi." };
+  let eta: string | null = null;
+  if (to === "SHIPPED" && estimatedArrival) {
+    const d = new Date(`${estimatedArrival}T00:00:00`);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(estimatedArrival) || Number.isNaN(d.getTime())) return { ok: false, message: "Format perkiraan tiba tidak valid." };
+    if (d < today) return { ok: false, message: "Perkiraan tiba tidak boleh sebelum hari ini." };
+    if (d.getTime() - today.getTime() > 60 * 864e5) return { ok: false, message: "Perkiraan tiba maksimal 60 hari dari sekarang." };
+    eta = estimatedArrival;
+  }
 
   if (to === "CANCELLED" || to === "REFUNDED") {
     if (from === "PENDING_PAYMENT") {
@@ -124,13 +133,13 @@ export async function updateOrderStatus(orderId: string, to: OrderStatus, tracki
   } else {
     const { error } = await db.from("orders").update({ status: to }).eq("id", orderId).eq("status", from); // optimistic guard
     if (error) return { ok: false, message: "Gagal memperbarui." };
-    if (to === "SHIPPED") await db.from("shipments").upsert({ order_id: orderId, tracking_number: tracking!.trim().slice(0, 60), shipped_at: new Date().toISOString() });
+    if (to === "SHIPPED") await db.from("shipments").upsert({ order_id: orderId, tracking_number: tracking!.trim().slice(0, 60), shipped_at: new Date().toISOString(), estimated_arrival: eta });
     if (to === "DELIVERED") await db.from("shipments").update({ delivered_at: new Date().toISOString() }).eq("order_id", orderId);
     await db.from("order_events").insert({ order_id: orderId, from_status: from, to_status: to, actor_id: admin.id });
-    await db.from("notifications").insert({ user_id: o.user_id, type: to === "SHIPPED" ? "shipping" : "order", title: `Pesanan ${o.order_number}: ${to}`, link: `/orders/${orderId}` });
+    await db.from("notifications").insert({ user_id: o.user_id, type: to === "SHIPPED" ? "shipping" : "order", title: `Pesanan ${o.order_number}: ${STATUS_LABEL[to]}`, body: to === "SHIPPED" ? `Resi ${tracking!.trim()}${eta ? ` · perkiraan tiba ${new Date(`${eta}T00:00:00`).toLocaleDateString("id-ID", { dateStyle: "long" })}` : ""}` : undefined, link: `/orders/${orderId}` });
     const { data: u } = await db.auth.admin.getUserById(o.user_id);
     if (u.user?.email) {
-      if (to === "SHIPPED") await sendEmail(u.user.email, "order_shipped", { order: o.order_number, tracking: tracking!.trim() });
+      if (to === "SHIPPED") await sendEmail(u.user.email, "order_shipped", { order: o.order_number, tracking: tracking!.trim(), eta: eta ? new Date(`${eta}T00:00:00`).toLocaleDateString("id-ID", { dateStyle: "long" }) : "" });
       if (to === "COMPLETED") await sendEmail(u.user.email, "order_completed", { order: o.order_number });
     }
   }

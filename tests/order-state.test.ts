@@ -16,3 +16,25 @@ describe("order state machine", () => {
   });
   it("admin cannot manually set PAID", () => { expect(ADMIN_SETTABLE).not.toContain("PAID"); });
 });
+
+import { allowedTransitions } from "../src/lib/order-state";
+describe("admin choices after payment", () => {
+  it("physical order: can ship straight after payment, packing steps optional", () => {
+    expect(allowedTransitions("PAID", true)).toEqual(expect.arrayContaining(["PROCESSING", "PACKED", "SHIPPED", "REFUNDED", "CANCELLED"]));
+  });
+  it("physical order can NOT be completed without shipping", () => {
+    expect(allowedTransitions("PAID", true)).not.toContain("COMPLETED");
+    expect(allowedTransitions("PACKED", true)).not.toContain("COMPLETED");
+  });
+  it("digital-only order: complete, never shipped or packed", () => {
+    const o = allowedTransitions("PAID", false);
+    expect(o).toContain("COMPLETED");
+    expect(o).not.toContain("SHIPPED");
+    expect(o).not.toContain("PACKED");
+    expect(o).not.toContain("PROCESSING");
+  });
+  it("after shipping only delivery is offered; then completion", () => {
+    expect(allowedTransitions("SHIPPED", true)).toEqual(["DELIVERED"]);
+    expect(allowedTransitions("DELIVERED", true)).toEqual(expect.arrayContaining(["COMPLETED", "REFUNDED"]));
+  });
+});

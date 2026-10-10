@@ -6,6 +6,7 @@ import { getUser, requireAdmin, audit } from "@/lib/auth/session";
 import { validateUpload, PROOF_RULE, randomName } from "@/lib/upload";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email";
+import { sweepExpiredOrders } from "@/lib/expiry";
 import type { ActionState } from "@/types";
 
 const uuid = z.string().uuid();
@@ -24,9 +25,13 @@ export async function submitPaymentProof(_: ActionState, fd: FormData): Promise<
   if (!p.success) return { ok: false, errors: p.error.flatten().fieldErrors };
 
   const supabase = await createSupabaseServer();
-  const { data: order } = await supabase.from("orders").select("id, status, order_number").eq("id", p.data.order_id).eq("user_id", user.id).maybeSingle();
+  const { data: order } = await supabase.from("orders").select("id, status, order_number, expires_at").eq("id", p.data.order_id).eq("user_id", user.id).maybeSingle();
   if (!order) return { ok: false, message: "Pesanan tidak ditemukan." };
   if (order.status !== "PENDING_PAYMENT") return { ok: false, message: "Pesanan ini tidak sedang menunggu pembayaran." };
+  if (new Date(order.expires_at).getTime() < Date.now()) {
+    await sweepExpiredOrders({ force: true }); // cancel it now so stock is released and the buyer sees the real state
+    return { ok: false, message: "Batas waktu pembayaran sudah terlewat, sehingga pesanan dibatalkan otomatis. Silakan buat pesanan baru." };
+  }
 
   const { count } = await supabase.from("payment_proofs").select("id", { count: "exact", head: true }).eq("order_id", order.id).eq("status", "PENDING");
   if ((count ?? 0) >= 1) return { ok: false, message: "Bukti sebelumnya masih menunggu verifikasi. Mohon tunggu admin memeriksanya." };

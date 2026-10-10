@@ -2,6 +2,7 @@ import { LogOut } from "lucide-react";
 import { requireAdmin } from "@/lib/auth/session";
 import { AdminNav } from "@/components/admin-nav";
 import { logout } from "@/actions/auth";
+import { sweepExpiredOrders } from "@/lib/expiry";
 
 export const metadata = { title: "Admin", robots: { index: false, follow: false } };
 const GROUPS = [
@@ -13,6 +14,7 @@ const GROUPS = [
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const me = await requireAdmin(); // server-side role gate for every /admin/* route
+  await sweepExpiredOrders(); // keeps order/payment lists current on every admin page
   return (
     <div className="grid gap-6 md:grid-cols-[240px_1fr]">
       <aside className="md:sticky md:top-40 md:self-start">

@@ -59,4 +59,18 @@ describe.skipIf(!RUN)("manual payment proofs (needs a real Supabase project; RUN
     expect([r1.data, r2.data].sort()).toEqual(["ALREADY_PROCESSED", "OK"]);
     expect((await db.from("inventory").select("stock").eq("book_id", book).single()).data!.stock).toBe(4);
   });
+
+  it("auto-expiry cancels an overdue unpaid order, releases stock and notifies the buyer", async () => {
+    const u = await makeUser(db, "p7"); const book = await makeBook(db, 3);
+    const { data: id } = await order(db, u.id, [{ book_id: book, quantity: 2 }]);
+    expect((await db.from("inventory").select("reserved").eq("book_id", book).single()).data!.reserved).toBe(2);
+    await db.from("orders").update({ expires_at: new Date(Date.now() - 60_000).toISOString() }).eq("id", id);
+    await db.rpc("expire_stale_orders");
+    expect((await db.from("orders").select("status").eq("id", id).single()).data!.status).toBe("CANCELLED");
+    expect((await db.from("inventory").select("reserved").eq("book_id", book).single()).data!.reserved).toBe(0);
+    const { data: ev } = await db.from("order_events").select("note").eq("order_id", id).eq("to_status", "CANCELLED");
+    expect(ev?.[0]?.note).toBe("expired");
+    const { data: notes } = await db.from("notifications").select("title").eq("user_id", u.id);
+    expect(notes?.some((n) => /dibatalkan otomatis/i.test(n.title))).toBe(true);
+  });
 });
