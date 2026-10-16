@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { BOOK_SELECT, type BookRow } from "@/types";
 import { sanitizeSearch } from "@/lib/utils";
+import { attachPromos } from "@/lib/pricing/catalog";
 
 import { PAGE_SIZE } from "@/lib/catalog-const";
 export { PAGE_SIZE };
@@ -45,7 +46,7 @@ export async function queryBooks(p: CatalogParams) {
   }
   const from = (page - 1) * PAGE_SIZE;
   const { data, count, error } = await q.range(from, from + PAGE_SIZE - 1);
-  let books = (data ?? []) as unknown as BookRow[];
+  let books = await attachPromos((data ?? []) as unknown as BookRow[]);
   if (p.available === "1") books = books.filter((b) => b.format !== "PRINT" || ((Array.isArray(b.inventory) ? b.inventory[0] : b.inventory)?.stock ?? 0) > 0);
   return { books, total: count ?? 0, page, pages: Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE)), error: !!error };
 }

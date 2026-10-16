@@ -1,12 +1,14 @@
 "use server";
 import { redirect } from "next/navigation";
-import { createSupabaseAdmin, createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseAdmin } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth/session";
 import { getCart } from "@/lib/cart";
 import { checkoutSchema } from "@/schemas";
 import { getShippingProvider } from "@/lib/shipping";
 import { getPaymentProvider } from "@/lib/payments";
-import { COUPON_MESSAGES } from "@/lib/pricing";
+import { getQuote, orderRpcArgs } from "@/lib/pricing/service";
+import { couponMessage, isCouponErrorCode } from "@/lib/pricing/messages";
+import { readCouponCode, clearCouponCode } from "@/lib/coupon-cookie";
 import { sendEmail } from "@/lib/email";
 import { rateLimit } from "@/lib/rate-limit";
 import type { ActionState } from "@/types";
@@ -16,6 +18,8 @@ export async function getShippingRates(city: string, postal: string) {
   if (!cart.hasPhysical) return [];
   return getShippingProvider().getRates({ destinationCity: city, destinationPostalCode: postal, weightGram: cart.weightGram });
 }
+
+const RETRYABLE = ["PRICE_CHANGED", "PROMO_CHANGED", "QUOTE_MISMATCH"];
 
 export async function placeOrder(_: ActionState, fd: FormData): Promise<ActionState> {
   const user = await getUser();
@@ -29,14 +33,13 @@ export async function placeOrder(_: ActionState, fd: FormData): Promise<ActionSt
       latitude: fd.get("latitude"), longitude: fd.get("longitude"),
     },
     shipping: fd.get("shipping") ?? "NONE:NONE",
-    coupon: fd.get("coupon") ?? "",
   });
   if (!parsed.success) {
     const flat = parsed.error.flatten((i) => i.path.slice(-1)[0] as string).fieldErrors;
     return { ok: false, message: "Periksa kembali data pengiriman.", errors: flat as Record<string, string[]> };
   }
 
-  // Re-read everything server-side. Nothing from the browser is trusted for money or stock.
+  // Re-read everything server-side. Nothing from the browser is trusted for money, stock, promotions or coupons.
   const cart = await getCart();
   if (!cart.lines.length) return { ok: false, message: "Keranjang kosong." };
   const bad = cart.lines.find((l) => l.problem);
@@ -51,21 +54,28 @@ export async function placeOrder(_: ActionState, fd: FormData): Promise<ActionSt
     shippingCost = rate.cost; courier = rate.courier; service = rate.service;
   }
 
+  const couponCode = await readCouponCode();
+  const items = cart.lines.map((l) => ({ bookId: l.book.id, quantity: l.quantity }));
   const db = createSupabaseAdmin();
-  const { data: orderId, error } = await db.rpc("create_order", {
-    p_user: user.id,
-    p_items: cart.lines.map((l) => ({ book_id: l.book.id, quantity: l.quantity })),
-    p_address: parsed.data.address,
-    p_shipping_cost: shippingCost, p_courier: courier, p_service: service,
-    p_coupon: parsed.data.coupon || null,
-  });
-  if (error) {
-    const code = /(COUPON_[A-Z_]+|INSUFFICIENT_STOCK|BOOK_UNAVAILABLE|EMPTY_CART)/.exec(error.message)?.[1] ?? "";
-    if (code.startsWith("COUPON_")) return { ok: false, message: COUPON_MESSAGES[code] ?? "Kupon tidak dapat dipakai.", errors: { coupon: [COUPON_MESSAGES[code] ?? "Kupon tidak valid"] } };
+
+  let orderId: string | null = null;
+  for (let attempt = 0; attempt < 2 && !orderId; attempt++) {
+    const quote = await getQuote({ items, shippingCost, couponCode, userId: user.id });
+    if (quote.missingBookIds.length) return { ok: false, message: "Sebagian buku tidak lagi tersedia. Perbarui keranjang." };
+    if (couponCode && quote.couponError) return { ok: false, message: `${quote.couponError.message} Hapus atau ganti kupon untuk melanjutkan.` };
+
+    const { data, error } = await db.rpc("create_order_v3", orderRpcArgs(user.id, quote, parsed.data.address, courier, service));
+    if (!error) { orderId = data as string; break; }
+
+    const code = /(COUPON_[A-Z_]+|INSUFFICIENT_STOCK|BOOK_UNAVAILABLE|EMPTY_CART|PRICE_CHANGED|PROMO_CHANGED|QUOTE_MISMATCH|INVALID_[A-Z]+)/.exec(error.message)?.[1] ?? "";
+    if (RETRYABLE.includes(code) && attempt === 0) continue; // prices/promotions changed between quote and save: recompute once
+    if (isCouponErrorCode(code)) return { ok: false, message: `${couponMessage(code)} Hapus atau ganti kupon untuk melanjutkan.` };
+    if (RETRYABLE.includes(code)) return { ok: false, message: "Harga atau promosi baru saja berubah. Periksa kembali ringkasan pesananmu, lalu coba lagi." };
     if (code === "INSUFFICIENT_STOCK") return { ok: false, message: "Stok salah satu buku baru saja berubah. Perbarui keranjang." };
-    console.error("[checkout] create_order", error);
+    console.error("[checkout] create_order_v3", error);
     return { ok: false, message: "Pesanan gagal dibuat. Coba lagi." };
   }
+  if (!orderId) return { ok: false, message: "Pesanan gagal dibuat. Coba lagi." };
 
   const { data: order } = await db.from("orders").select("id, order_number, total").eq("id", orderId).single();
   try {
@@ -78,11 +88,12 @@ export async function placeOrder(_: ActionState, fd: FormData): Promise<ActionSt
     });
     await db.from("payments").insert({ order_id: order!.id, provider: provider.name, provider_txn_id: pay.providerTxnId, amount: order!.total, redirect_url: pay.redirectUrl, raw: pay.raw as object });
     if (user.email) await sendEmail(user.email, "order_created", { order: order!.order_number });
+    await clearCouponCode(); // consumed by this order
     redirect(pay.redirectUrl);
   } catch (e) {
     if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
     if (typeof e === "object" && e && "digest" in e && String((e as { digest: string }).digest).startsWith("NEXT_REDIRECT")) throw e;
-    // compensation: release reserved stock + coupon so nothing is left half-done
+    // compensation: release reserved stock AND the coupon (history kept) so nothing is left half-done
     await db.rpc("cancel_pending_order", { p_order: order!.id, p_actor: user.id, p_note: "payment initialisation failed" });
     console.error("[checkout] payment", e);
     return { ok: false, message: "Gagal menyiapkan pembayaran. Pesanan dibatalkan, silakan coba lagi." };

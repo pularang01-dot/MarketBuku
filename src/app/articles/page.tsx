@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header";
 import { BookCard } from "@/components/book-card";
 import { getSavedIds } from "@/lib/saved";
 import { BOOK_SELECT, type BookRow } from "@/types";
+import { attachPromos } from "@/lib/pricing/catalog";
 
 export const metadata: Metadata = { title: "Artikel & Wawasan Pendidikan", description: "Tips belajar dan panduan memilih buku untuk siswa, orang tua, dan guru.", alternates: { canonical: "/articles" } };
 const readTime = (t: string) => `${Math.max(1, Math.round(t.trim().split(/\s+/).length / 200))} menit baca`;
@@ -27,6 +28,7 @@ export default async function Articles({ searchParams }: { searchParams: Promise
   const [feat, ...rest] = list;
   const ids = [...new Set(list.flatMap((a) => a.related_book_ids ?? []))].slice(0, 4);
   const [{ data: rel }, saved] = await Promise.all([ids.length ? supabase.from("books").select(BOOK_SELECT).in("id", ids).eq("status", "PUBLISHED") : Promise.resolve({ data: [] }), getSavedIds()]);
+  const relPriced = await attachPromos((rel ?? []) as unknown as BookRow[]);
   return (
     <>
       <PageHeader title="Artikel & Wawasan Pendidikan" subtitle="Panduan memilih buku, tips belajar efektif, dan strategi menghadapi ujian." crumbs={[{ href: "/", label: "Beranda" }, { label: "Artikel" }]} />
@@ -41,7 +43,7 @@ export default async function Articles({ searchParams }: { searchParams: Promise
             <Link key={a.slug} href={`/articles/${a.slug}`} className="card flex flex-col overflow-hidden transition hover:border-brand hover:shadow-float"><Cover a={a} className="h-40" />
               <div className="flex flex-1 flex-col p-4"><div className="flex items-center justify-between text-xs"><span className="badge bg-brand-light text-brand">{a.category ?? "Artikel"}</span><span className="text-ink-mute">{readTime(a.content)}</span></div><h3 className="mt-2 line-clamp-2 text-lg leading-snug">{a.title}</h3><p className="mt-1 line-clamp-3 text-sm text-ink-soft">{a.excerpt}</p><p className="mt-auto pt-3 text-xs text-ink-mute">{a.published_at && new Date(a.published_at).toLocaleDateString("id-ID", { dateStyle: "medium" })}</p></div></Link>))}</div></section>}
         </>)}
-      {!!rel?.length && <section className="mt-12"><h2 className="text-2xl">Buku Terkait Referensi Bacaan</h2><p className="mb-4 mt-1 text-sm text-ink-soft">Buku yang dirujuk langsung dalam artikel di atas.</p><div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{(rel as unknown as BookRow[]).map((b) => <BookCard key={b.id} book={b} saved={saved.has(b.id)} />)}</div></section>}
+      {!!rel?.length && <section className="mt-12"><h2 className="text-2xl">Buku Terkait Referensi Bacaan</h2><p className="mb-4 mt-1 text-sm text-ink-soft">Buku yang dirujuk langsung dalam artikel di atas.</p><div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{relPriced.map((b) => <BookCard key={b.id} book={b} saved={saved.has(b.id)} />)}</div></section>}
     </>
   );
 }

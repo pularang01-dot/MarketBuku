@@ -9,6 +9,7 @@ import { BookCard } from "@/components/book-card";
 import { SearchBox } from "@/components/search-box";
 import { BOOK_SELECT, type BookRow } from "@/types";
 import { formatRupiah } from "@/lib/utils";
+import { attachPromos } from "@/lib/pricing/catalog";
 
 export const revalidate = 0;
 
@@ -43,7 +44,8 @@ export default async function Home() {
   ]);
   const counts = await Promise.all((levels.data ?? []).map(async (l) => ({ id: l.id, n: (await supabase.from("books").select("id", { count: "exact", head: true }).eq("status", "PUBLISHED").eq("education_level_id", l.id)).count ?? 0 })));
   const countBy = new Map(counts.map((c) => [c.id, c.n]));
-  const heroBooks = ((best.data ?? []) as unknown as BookRow[]).slice(0, 3);
+  const [bestBooks, freshBooks, recBooks] = await Promise.all([attachPromos((best.data ?? []) as unknown as BookRow[]), attachPromos((fresh.data ?? []) as unknown as BookRow[]), attachPromos(rec.items.map((r) => r.book))]);
+  const heroBooks = bestBooks.slice(0, 3);
   const notes = new Map(rec.items.map((r) => [r.book.id, r.reasons[0]]));
 
   return (
@@ -80,8 +82,8 @@ export default async function Home() {
           {(subjects.data ?? []).map((s) => <Link key={s.slug} href={`/subjects/${s.slug}`} className="chip text-xs">{s.name}</Link>)}</div>
       </Section>
 
-      <Section title="Buku Terlaris" subtitle="Paling banyak dipesan siswa, guru, dan orang tua." href="/books?sort=popular"><Grid books={(best.data ?? []) as unknown as BookRow[]} saved={saved} /></Section>
-      <Section title={rec.personalised ? "Rekomendasi untukmu" : "Sedang populer"} subtitle={rec.personalised ? "Berdasarkan preferensi, wishlist, dan riwayatmu." : "Masuk dan atur preferensi belajar untuk rekomendasi yang lebih pas."}><Grid books={rec.items.map((r) => r.book)} saved={saved} notes={notes} /></Section>
+      <Section title="Buku Terlaris" subtitle="Paling banyak dipesan siswa, guru, dan orang tua." href="/books?sort=popular"><Grid books={bestBooks} saved={saved} /></Section>
+      <Section title={rec.personalised ? "Rekomendasi untukmu" : "Sedang populer"} subtitle={rec.personalised ? "Berdasarkan preferensi, wishlist, dan riwayatmu." : "Masuk dan atur preferensi belajar untuk rekomendasi yang lebih pas."}><Grid books={recBooks} saved={saved} notes={notes} /></Section>
 
       {/* FINDER STRIP */}
       <section className="panel mt-14 p-5 sm:p-6">
@@ -93,7 +95,7 @@ export default async function Home() {
         </form>
       </section>
 
-      <Section title="Buku Terbaru" subtitle="Judul yang baru masuk ke katalog." href="/books?sort=newest"><Grid books={(fresh.data ?? []) as unknown as BookRow[]} saved={saved} /></Section>
+      <Section title="Buku Terbaru" subtitle="Judul yang baru masuk ke katalog." href="/books?sort=newest"><Grid books={freshBooks} saved={saved} /></Section>
 
       {!!bundles.data?.length && (
         <Section title="Paket Edukasi Hemat" subtitle="Beli lengkap dalam satu paket dengan harga lebih hemat." href="/bundles">

@@ -16,6 +16,8 @@ import { WishlistButton } from "@/components/wishlist-button";
 import { BookCard } from "@/components/book-card";
 import { ReviewForm } from "@/components/review-form";
 import { formatRupiah, jsonLd, SITE_URL } from "@/lib/utils";
+import { attachPromos } from "@/lib/pricing/catalog";
+import { displayPrice, discountPercent } from "@/lib/book-price";
 
 type P = { params: Promise<{ slug: string }> };
 
@@ -29,8 +31,9 @@ export async function generateMetadata({ params }: P): Promise<Metadata> {
 
 export default async function BookPage({ params }: P) {
   const { slug } = await params;
-  const book = await getBookBySlug(slug);
-  if (!book) notFound();
+  const base = await getBookBySlug(slug);
+  if (!base) notFound();
+  const [book] = await attachPromos([base]);
   const supabase = await createSupabaseServer();
   const user = await getUser();
   const [{ data: reviews }, related, saved, purchased] = await Promise.all([
@@ -42,7 +45,7 @@ export default async function BookPage({ params }: P) {
 
   const inv = stockOf(book);
   const avail = book.format === "PRINT" ? Math.max((inv?.stock ?? 0) - (inv?.reserved ?? 0), 0) : null;
-  const price = book.sale_price ?? book.price;
+  const price = displayPrice(book);
   const specs: [string, string | number | null][] = [["ISBN", book.isbn], ["Penulis", book.author?.name ?? null], ["Penerbit", book.publisher?.name ?? null], ["Tahun terbit", book.publication_year], ["Halaman", book.pages], ["Bahasa", book.language], ["Berat", book.format === "PRINT" ? `${book.weight_gram} g` : null], ["Dimensi", book.dimensions], ["Format", book.format === "PRINT" ? "Buku cetak" : book.format === "EBOOK" ? "E-book (PDF)" : "Modul digital (PDF)"]];
 
   const ld = {
@@ -56,7 +59,8 @@ export default async function BookPage({ params }: P) {
 
   const { data: subj } = await supabase.from("book_subjects").select("subject:subjects(name,slug)").eq("book_id", book.id);
   const subjects = (subj ?? []).map((r) => r.subject as unknown as { name: string; slug: string }).filter(Boolean);
-  const disc = book.sale_price != null && book.sale_price < book.price ? Math.round((1 - book.sale_price / book.price) * 100) : 0;
+  const disc = discountPercent(book);
+  const relatedBooks = await attachPromos(related.map((r) => r.book));
   const tab = "whitespace-nowrap border-b-2 border-transparent px-1 pb-3 text-sm font-medium text-ink-soft hover:text-brand";
 
   return (
@@ -82,7 +86,7 @@ export default async function BookPage({ params }: P) {
             <p className="mt-3 text-sm text-ink-soft">Penulis: <strong className="text-ink">{book.author?.name ?? "—"}</strong> &nbsp;·&nbsp; Penerbit: <strong className="text-ink">{book.publisher?.name ?? "—"}</strong></p>
             <p className="mt-2 flex flex-wrap items-center gap-3 text-sm"><span className="flex items-center gap-1"><Star aria-hidden className="h-4 w-4 fill-marigold text-marigold" /><strong>{book.rating_count ? Number(book.rating_avg).toFixed(1) : "—"}</strong> <span className="text-ink-mute">({book.rating_count} ulasan)</span></span><span className="text-ink-mute">·</span><span>{book.sold_count} terjual</span></p>
             <div className="mt-5 border-t border-line pt-5">
-              <div className="flex flex-wrap items-baseline gap-3"><span className="text-3xl font-bold text-brand">{formatRupiah(price)}</span>{disc > 0 && <><span className="text-ink-mute line-through">{formatRupiah(book.price)}</span><span className="badge bg-marigold-light text-marigold-dark">-{disc}%</span></>}</div>
+              <div className="flex flex-wrap items-baseline gap-3"><span className="text-3xl font-bold text-brand">{formatRupiah(price)}</span>{disc > 0 && <><span className="text-ink-mute line-through">{formatRupiah(book.price)}</span><span className="badge bg-marigold-light text-marigold-dark">-{disc}%</span></>}{book.promo && <span className="badge bg-leaf-light text-leaf">{book.promo.title}</span>}</div>
               <p className="mt-2 flex items-center gap-2 text-sm"><span className={`h-2 w-2 rounded-full ${avail === 0 ? "bg-danger" : "bg-leaf"}`} />{avail === null ? <span className="text-leaf">Produk digital — tersedia di perpustakaan setelah pembayaran diverifikasi.</span> : avail === 0 ? <span className="text-danger">Stok habis</span> : <span className="text-leaf">Stok tersedia: {avail} eksemplar</span>}</p>
             </div>
             <div className="mt-5 flex items-start gap-3"><div className="flex-1"><AddToCart bookId={book.id} max={avail} disabled={avail === 0} /></div><WishlistButton bookId={book.id} initial={saved.has(book.id)} variant="button" /></div>
@@ -108,7 +112,7 @@ export default async function BookPage({ params }: P) {
             {!reviews?.length && <li className="text-sm text-ink-mute">Belum ada ulasan yang ditampilkan.</li>}</ul></section>
       </div>
 
-      {related.length > 0 && <section className="mt-10"><h2 className="text-2xl">Buku Terkait</h2><p className="mt-1 text-sm text-ink-soft">Pilihan lain yang cocok dengan buku ini.</p><div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">{related.map((r) => <BookCard key={r.book.id} book={r.book} saved={saved.has(r.book.id)} note={r.reasons[0]} />)}</div></section>}
+      {related.length > 0 && <section className="mt-10"><h2 className="text-2xl">Buku Terkait</h2><p className="mt-1 text-sm text-ink-soft">Pilihan lain yang cocok dengan buku ini.</p><div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">{related.map((r, i) => <BookCard key={r.book.id} book={relatedBooks[i]} saved={saved.has(r.book.id)} note={r.reasons[0]} />)}</div></section>}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(ld) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(crumbs) }} />
     </article>

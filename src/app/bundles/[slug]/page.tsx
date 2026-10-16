@@ -6,13 +6,16 @@ import { Breadcrumb } from "@/components/breadcrumb";
 import { getSavedIds } from "@/lib/saved";
 import { formatRupiah } from "@/lib/utils";
 import { BOOK_SELECT, type BookRow } from "@/types";
+import { attachPromos } from "@/lib/pricing/catalog";
 
 export default async function BundlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const supabase = await createSupabaseServer();
   const [{ data: b }, saved] = await Promise.all([supabase.from("bundles").select(`*, bundle_items(quantity, book:books(${BOOK_SELECT}))`).eq("slug", slug).eq("status", "PUBLISHED").maybeSingle(), getSavedIds()]);
   if (!b) notFound();
-  const items = b.bundle_items as unknown as { quantity: number; book: BookRow }[];
+  const rawItems = b.bundle_items as unknown as { quantity: number; book: BookRow }[];
+  const pricedBooks = await attachPromos(rawItems.map((i) => i.book));
+  const items = rawItems.map((i, k) => ({ ...i, book: pricedBooks[k] }));
   const normal = items.reduce((s, i) => s + (i.book.sale_price ?? i.book.price) * i.quantity, 0);
   const save = Math.max(normal - b.price, 0);
   return (

@@ -157,23 +157,6 @@ export async function moderateReview(id: string, status: "APPROVED" | "HIDDEN" |
   revalidatePath("/admin/reviews");
 }
 
-export async function saveCoupon(_: ActionState, fd: FormData): Promise<ActionState> {
-  const admin = await requireAdmin();
-  const s = z.object({
-    code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{3,30}$/), type: z.enum(["PERCENT", "FIXED", "FREE_SHIPPING"]),
-    value: z.coerce.number().int().min(0), min_purchase: z.coerce.number().int().min(0).default(0),
-    usage_limit: z.coerce.number().int().min(1).optional(), per_user_limit: z.coerce.number().int().min(1).default(1),
-    ends_at: z.string().optional(), is_public: z.string().optional(),
-  }).refine((d) => d.type !== "PERCENT" || d.value <= 100, { message: "Persen maksimal 100", path: ["value"] }).safeParse(Object.fromEntries(Array.from(fd).map(([k, v]) => [k, v === "" ? undefined : v])));
-  if (!s.success) return { ok: false, errors: s.error.flatten().fieldErrors };
-  const { is_public, ...rest } = s.data;
-  const { error } = await createSupabaseAdmin().from("coupons").insert({ ...rest, is_public: is_public === "on", ends_at: rest.ends_at ? new Date(rest.ends_at).toISOString() : null });
-  if (error) return { ok: false, message: error.code === "23505" ? "Kode sudah ada." : "Gagal menyimpan." };
-  await audit(admin.id, "coupon.create", "coupons", s.data.code);
-  revalidatePath("/admin/coupons");
-  return { ok: true, message: "Kupon dibuat." };
-}
-
 const TAXO = ["categories", "subjects", "grades", "authors", "publishers"] as const;
 export async function addTaxonomy(_: ActionState, fd: FormData): Promise<ActionState> {
   const admin = await requireAdmin();

@@ -1,9 +1,9 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Boxes, Building2, Gift, GraduationCap, Landmark, LayoutDashboard, Library, Megaphone, MessageSquareText, Newspaper, PackageCheck, ReceiptText, Settings, Tags, TicketPercent, UserRound } from "lucide-react";
+import { Activity, Boxes, Calculator, Building2, Gift, GraduationCap, Landmark, LayoutDashboard, Library, Megaphone, MessageSquareText, Newspaper, PackageCheck, ReceiptText, Settings, Tags, TicketPercent, UserRound } from "lucide-react";
 
-const ICONS = { Activity, Boxes, Building2, Gift, GraduationCap, Landmark, LayoutDashboard, Library, Megaphone, MessageSquareText, Newspaper, PackageCheck, ReceiptText, Settings, Tags, TicketPercent, UserRound };
+const ICONS = { Activity, Boxes, Calculator, Building2, Gift, GraduationCap, Landmark, LayoutDashboard, Library, Megaphone, MessageSquareText, Newspaper, PackageCheck, ReceiptText, Settings, Tags, TicketPercent, UserRound };
 type Group = { title: string; items: { href: string; label: string; icon: keyof typeof ICONS }[] };
 
 export function AdminNav({ groups }: { groups: Group[] }) {

@@ -3,12 +3,15 @@ import { cookies } from "next/headers";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth/session";
 import { BOOK_SELECT, type BookRow } from "@/types";
-import { unitPrice } from "@/lib/pricing";
-import { bestBundleDiscount, type BundleDef } from "@/lib/bundles";
+import { getQuote } from "@/lib/pricing/service";
+import { computeQuote } from "@/lib/pricing/engine";
+import { readCouponCode } from "@/lib/coupon-cookie";
+import type { Quote, QuoteLine } from "@/lib/pricing/types";
 
 export const CART_COOKIE = "tbe_cart";
 export interface RawLine { b: string; q: number }
-export interface CartLine { book: BookRow; quantity: number; unit: number; lineTotal: number; available: number | null; problem: string | null }
+/** unit / lineTotal are the NET figures after automatic promotions (what the buyer pays before bundle/coupon). */
+export interface CartLine { book: BookRow; quantity: number; unit: number; lineTotal: number; available: number | null; problem: string | null; pricing: QuoteLine | null }
 
 export const stockOf = (b: BookRow) => (Array.isArray(b.inventory) ? b.inventory[0] : b.inventory) ?? null;
 
@@ -27,41 +30,55 @@ export async function writeGuestCart(lines: RawLine[]) {
   store.set(CART_COOKIE, JSON.stringify(lines), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 30 });
 }
 
-/** Builds cart with prices and stock re-read from the database — never from the browser. */
-export async function getCart(): Promise<{ lines: CartLine[]; subtotal: number; bundleDiscount: number; weightGram: number; hasPhysical: boolean }> {
+async function readRawCart(): Promise<{ raw: RawLine[]; userId: string | null }> {
   const user = await getUser();
-  const supabase = await createSupabaseServer();
-  let raw: RawLine[];
   if (user) {
+    const supabase = await createSupabaseServer();
     const { data } = await supabase.from("cart_items").select("book_id, quantity").eq("user_id", user.id);
-    raw = (data ?? []).map((r) => ({ b: r.book_id, q: r.quantity }));
-  } else raw = await readGuestCart();
-  if (!raw.length) return { lines: [], subtotal: 0, bundleDiscount: 0, weightGram: 0, hasPhysical: false };
+    return { raw: (data ?? []).map((r) => ({ b: r.book_id, q: r.quantity })), userId: user.id };
+  }
+  return { raw: await readGuestCart(), userId: null };
+}
 
+/** Cheap item count for the header (no pricing queries). */
+export async function getCartCount() { return (await readRawCart()).raw.reduce((s, l) => s + l.q, 0); }
+
+/** Cart items for pricing actions (e.g. applying a coupon). */
+export async function readCartItems() { return (await readRawCart()).raw.map((l) => ({ bookId: l.b, quantity: l.q })); }
+
+/** Builds the cart with prices, promotions, coupon and stock re-read from the database — never from the browser. */
+export async function getCart(): Promise<{ lines: CartLine[]; quote: Quote; couponCode: string | null; subtotal: number; bundleDiscount: number; weightGram: number; hasPhysical: boolean }> {
+  const { raw, userId } = await readRawCart();
+  const couponCode = await readCouponCode();
+  if (!raw.length) {
+    const quote = computeQuote({ books: new Map(), promotions: [], bundles: [], coupon: null, couponCodeGiven: false, userUsedCount: 0, loggedIn: !!userId, now: new Date() }, { items: [], shippingCost: 0 });
+    return { lines: [], quote, couponCode, subtotal: 0, bundleDiscount: 0, weightGram: 0, hasPhysical: false };
+  }
+
+  const supabase = await createSupabaseServer();
   const { data: books } = await supabase.from("books").select(BOOK_SELECT).in("id", raw.map((r) => r.b)).eq("status", "PUBLISHED");
   const byId = new Map((books as BookRow[] | null ?? []).map((b) => [b.id, b]));
+  const present = raw.filter((r) => byId.has(r.b));
+  const quote = await getQuote({ items: present.map((r) => ({ bookId: r.b, quantity: r.q })), shippingCost: 0, couponCode, userId });
+  const priced = new Map(quote.lines.map((l) => [l.bookId, l]));
+
   const lines: CartLine[] = [];
-  for (const r of raw) {
-    const book = byId.get(r.b);
-    if (!book) continue;
+  const seen = new Set<string>();
+  for (const r of present) {
+    if (seen.has(r.b)) continue; seen.add(r.b);
+    const book = byId.get(r.b)!;
+    const pricing = priced.get(r.b) ?? null;
+    const qty = pricing?.quantity ?? r.q;
     const inv = stockOf(book);
     const avail = book.format === "PRINT" ? Math.max((inv?.stock ?? 0) - (inv?.reserved ?? 0), 0) : null;
-    const unit = unitPrice({ price: book.price, salePrice: book.sale_price });
     let problem: string | null = null;
     if (avail !== null && avail === 0) problem = "Stok habis";
-    else if (avail !== null && r.q > avail) problem = `Stok tersisa ${avail}`;
-    lines.push({ book, quantity: r.q, unit, lineTotal: unit * r.q, available: avail, problem });
+    else if (avail !== null && qty > avail) problem = `Stok tersisa ${avail}`;
+    lines.push({ book, quantity: qty, unit: pricing?.netUnit ?? book.price, lineTotal: pricing?.lineNet ?? book.price * qty, available: avail, problem, pricing });
   }
-  const { data: bd } = await supabase.from("bundles").select("id, price, bundle_items(book_id, quantity, book:books(price, sale_price))").eq("status", "PUBLISHED");
-  const defs: BundleDef[] = (bd ?? []).map((b) => ({
-    id: b.id, price: b.price,
-    items: (b.bundle_items as unknown as { book_id: string; quantity: number; book: { price: number; sale_price: number | null } }[]).map((i) => ({ bookId: i.book_id, quantity: i.quantity, unit: unitPrice({ price: i.book.price, salePrice: i.book.sale_price }) })),
-  }));
-  const bundleDiscount = bestBundleDiscount(new Map(lines.map((l) => [l.book.id, l.quantity])), defs).discount;
   return {
-    lines,
-    bundleDiscount: Math.min(bundleDiscount, lines.reduce((s, l) => s + l.lineTotal, 0)),
-    subtotal: lines.reduce((s, l) => s + l.lineTotal, 0),
+    lines, quote, couponCode,
+    subtotal: quote.subtotal, bundleDiscount: quote.bundleDiscount,
     weightGram: lines.filter((l) => l.book.format === "PRINT").reduce((s, l) => s + l.book.weight_gram * l.quantity, 0),
     hasPhysical: lines.some((l) => l.book.format === "PRINT"),
   };

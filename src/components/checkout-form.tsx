@@ -5,16 +5,19 @@ import { placeOrder, getShippingRates } from "@/actions/checkout";
 import { Field, Msg, Submit } from "./form-bits";
 import { AddressFields, type AddrValue } from "./address-fields";
 import { formatRupiah } from "@/lib/utils";
+import { CouponBox } from "./coupon-box";
+import { PriceBreakdown } from "./price-breakdown";
 
 type Rate = { courier: string; service: string; label: string; cost: number; etaDays: string };
 type Addr = AddrValue;
+interface Summary { subtotal: number; promoDiscount: number; promoTitles: string[]; bundleDiscount: number; couponCode: string | null; couponDiscount: number; freeShipping: boolean; baseTotal: number }
 interface Item { id: string; title: string; quantity: number; total: number; digital: boolean }
 
 const Step = ({ n, title, aside }: { n: number; title: string; aside?: React.ReactNode }) => (
   <div className="mb-4 flex items-center justify-between gap-3"><h2 className="flex items-center gap-3 text-xl"><span className="grid h-8 w-8 place-items-center rounded-pill bg-brand text-sm font-bold text-white">{n}</span>{title}</h2>{aside}</div>
 );
 
-export function CheckoutForm({ items, subtotal, bundleDiscount, hasPhysical, addresses, defaultName }: { items: Item[]; subtotal: number; bundleDiscount: number; hasPhysical: boolean; addresses: (Addr & { id: string })[]; defaultName: string }) {
+export function CheckoutForm({ items, summary, couponError, hasPhysical, addresses, defaultName }: { items: Item[]; summary: Summary; couponError: string | null; hasPhysical: boolean; addresses: (Addr & { id: string })[]; defaultName: string }) {
   const [state, action] = useActionState(placeOrder, null);
   const [addr, setAddr] = useState<Partial<Addr>>(addresses[0] ?? { recipient_name: defaultName });
   const [rates, setRates] = useState<Rate[]>([]);
@@ -49,19 +52,16 @@ export function CheckoutForm({ items, subtotal, bundleDiscount, hasPhysical, add
         </section>
 
         <section className="card p-5 sm:p-6"><Step n={3} title="Kupon Diskon" />
-          <Field name="coupon" label="Kode kupon (opsional)" state={state} placeholder="mis. BELAJAR10" autoCapitalize="characters" />
-          <p className="mt-2 text-xs text-ink-mute">Kupon diverifikasi oleh sistem saat pesanan dibuat; potongan final tampil di rincian pesanan.</p>
+          <CouponBox applied={summary.couponCode ? { code: summary.couponCode, label: summary.freeShipping ? "Gratis ongkir" : `hemat ${formatRupiah(summary.couponDiscount)}` } : null} error={couponError} loggedIn />
+          <p className="mt-2 text-xs text-ink-mute">Kupon diperiksa ulang oleh server saat pesanan dibuat.</p>
         </section>
       </div>
 
       <aside className="card h-fit space-y-4 p-5 lg:sticky lg:top-40"><h2 className="flex items-center justify-between text-xl">Ringkasan Pesanan <span className="badge bg-surface-muted text-ink-soft">{items.reduce((s, i) => s + i.quantity, 0)} buku</span></h2>
         <ul className="space-y-2">{items.map((i) => <li key={i.id} className="flex items-start justify-between gap-3 rounded-card bg-paper p-3 text-sm"><span className="min-w-0"><span className="line-clamp-1 font-medium">{i.title}</span><span className="text-xs text-ink-mute">{i.quantity}× {i.digital ? "E-book / modul" : "Buku cetak"}</span></span><span className="shrink-0 font-semibold">{formatRupiah(i.total)}</span></li>)}</ul>
-        <dl className="space-y-1.5 text-sm">
-          <div className="flex justify-between"><dt className="text-ink-soft">Subtotal produk</dt><dd>{formatRupiah(subtotal)}</dd></div>
-          {bundleDiscount > 0 && <div className="flex justify-between"><dt className="text-ink-soft">Diskon paket</dt><dd className="text-leaf">−{formatRupiah(bundleDiscount)}</dd></div>}
-          <div className="flex justify-between"><dt className="text-ink-soft">Ongkos kirim</dt><dd>{hasPhysical ? (rate ? formatRupiah(shipping) : "—") : "Gratis"}</dd></div>
-        </dl>
-        <div className="rounded-card bg-brand-light p-4"><p className="text-xs text-ink-soft">Perkiraan total tagihan</p><p className="text-2xl font-bold text-brand-dark">{formatRupiah(subtotal - bundleDiscount + shipping)}</p><p className="mt-1 text-xs text-ink-soft">Diskon kupon dihitung final oleh sistem.</p></div>
+        <PriceBreakdown shippingLabel={hasPhysical ? (rate ? (summary.freeShipping ? "Gratis (kupon)" : formatRupiah(shipping)) : "—") : "Gratis"}
+          d={{ subtotal: summary.subtotal, promoDiscount: summary.promoDiscount, promoTitles: summary.promoTitles, bundleDiscount: summary.bundleDiscount, couponCode: summary.couponCode, couponDiscount: summary.couponDiscount, shippingCost: hasPhysical ? shipping : 0, shippingDiscount: 0, total: summary.baseTotal + (summary.freeShipping ? 0 : shipping) }} />
+        <p className="text-xs text-ink-mute">Total final dihitung ulang oleh server saat pesanan dibuat.</p>
         <p className="rounded-card bg-paper p-3 text-xs text-ink-soft">Pembayaran dilakukan lewat <strong>transfer bank manual</strong>. Setelah pesanan dibuat, kamu akan diarahkan ke halaman pembayaran untuk mengunggah bukti transfer.</p>
         <Msg state={state} /><Submit className="btn-primary w-full"><Lock aria-hidden className="h-4 w-4" />Buat Pesanan & Bayar</Submit>
       </aside>

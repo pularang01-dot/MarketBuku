@@ -10,27 +10,6 @@ import type { ActionState } from "@/types";
 const blank = (fd: FormData) => Object.fromEntries(Array.from(fd).map(([k, v]) => [k, v === "" ? undefined : v]));
 const TAXO = ["categories", "subjects", "grades", "authors", "publishers"];
 
-/* ---------- promotions ---------- */
-export async function savePromotion(_: ActionState, fd: FormData): Promise<ActionState> {
-  const admin = await requireAdmin();
-  const p = z.object({ id: z.string().uuid().optional(), title: z.string().trim().min(3).max(120), description: z.string().max(500).optional(), starts_at: z.string().optional(), ends_at: z.string().optional(), active: z.string().optional() }).safeParse(blank(fd));
-  if (!p.success) return { ok: false, errors: p.error.flatten().fieldErrors };
-  const db = createSupabaseAdmin();
-  const row = { title: p.data.title, description: p.data.description ?? null, starts_at: p.data.starts_at ? new Date(p.data.starts_at).toISOString() : null, ends_at: p.data.ends_at ? new Date(p.data.ends_at).toISOString() : null, active: p.data.active === "on" };
-  if (p.data.id) await db.from("promotions").update(row).eq("id", p.data.id);
-  else { const slug = await uniqueSlug(p.data.title, async (s) => !!(await db.from("promotions").select("id").eq("slug", s).maybeSingle()).data); await db.from("promotions").insert({ ...row, slug }); }
-  await audit(admin.id, p.data.id ? "promotion.update" : "promotion.create", "promotions", p.data.id ?? p.data.title);
-  revalidatePath("/admin/promotions"); revalidatePath("/promo");
-  return { ok: true, message: "Promo tersimpan." };
-}
-export async function deletePromotion(id: string) {
-  const admin = await requireAdmin();
-  if (!z.string().uuid().safeParse(id).success) return;
-  await createSupabaseAdmin().from("promotions").delete().eq("id", id);
-  await audit(admin.id, "promotion.delete", "promotions", id);
-  revalidatePath("/admin/promotions"); revalidatePath("/promo");
-}
-
 /* ---------- bundles ---------- */
 export async function saveBundle(_: ActionState, fd: FormData): Promise<ActionState> {
   const admin = await requireAdmin();
@@ -76,15 +55,6 @@ export async function saveSettings(_: ActionState, fd: FormData): Promise<Action
   await audit(admin.id, "settings.update", "site_settings", undefined, Object.fromEntries(rows.map((r) => [r.key, r.value])));
   revalidatePath("/", "layout");
   return { ok: true, message: "Pengaturan disimpan." };
-}
-
-/* ---------- coupons ---------- */
-export async function toggleCoupon(id: string, active: boolean) {
-  const admin = await requireAdmin();
-  if (!z.string().uuid().safeParse(id).success) return;
-  await createSupabaseAdmin().from("coupons").update({ active }).eq("id", id);
-  await audit(admin.id, "coupon.toggle", "coupons", id, { active });
-  revalidatePath("/admin/coupons");
 }
 
 /* ---------- taxonomy ---------- */

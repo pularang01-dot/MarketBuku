@@ -9,6 +9,7 @@ export interface BookRow {
   publisher?: { name: string; slug: string } | null;
   grade?: { name: string; slug: string } | null;
   level?: { name: string; slug: string } | null;
+  promo?: { id: string; title: string; unitDiscount: number; netUnit: number; percent: number } | null;
   inventory?: { stock: number; reserved: number } | { stock: number; reserved: number }[] | null;
 }
 export type ActionState = { ok: boolean; message?: string; errors?: Record<string, string[]> } | null;

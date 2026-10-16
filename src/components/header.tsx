@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { BookOpen, Heart, ShoppingBag, User } from "lucide-react";
 import { getProfile } from "@/lib/auth/session";
-import { getCart } from "@/lib/cart";
+import { getCartCount } from "@/lib/cart";
 import { getSavedIds } from "@/lib/saved";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { SearchBox } from "./search-box";
@@ -9,11 +9,10 @@ import { NavLinks } from "./nav-links";
 import { logout } from "@/actions/auth";
 
 export async function Header() {
-  const [profile, cart, saved] = await Promise.all([getProfile(), getCart(), getSavedIds()]);
+  const [profile, count, saved] = await Promise.all([getProfile(), getCartCount(), getSavedIds()]);
   const supabase = await createSupabaseServer();
   const { data: ann } = await supabase.from("site_settings").select("value").eq("key", "announcement").maybeSingle();
   const announcement = typeof ann?.value === "string" && ann.value ? ann.value : "Buku pelajaran, latihan soal, dan referensi untuk SD, SMP, dan SMA";
-  const count = cart.lines.reduce((s, l) => s + l.quantity, 0);
   const iconBtn = "relative flex h-11 items-center gap-1.5 rounded-ctl border border-line bg-white px-3 text-sm text-ink-soft hover:border-brand hover:text-brand";
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-white print:hidden">

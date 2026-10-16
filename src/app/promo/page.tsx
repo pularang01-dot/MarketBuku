@@ -10,6 +10,8 @@ import { AddBundle } from "@/components/add-bundle";
 import { getSavedIds } from "@/lib/saved";
 import { BOOK_SELECT, type BookRow } from "@/types";
 import { formatRupiah } from "@/lib/utils";
+import { attachPromos } from "@/lib/pricing/catalog";
+import { inWindow } from "@/lib/pricing/engine";
 
 export const metadata: Metadata = { title: "Promo & Paket Hemat", description: "Kupon, paket edukasi hemat, dan buku diskon pilihan.", alternates: { canonical: "/promo" } };
 
@@ -18,6 +20,13 @@ const describe = (c: { type: string; value: number; min_purchase: number; max_di
   : c.type === "FIXED" ? `Potongan ${formatRupiah(c.value)}${c.min_purchase ? ` untuk belanja min. ${formatRupiah(c.min_purchase)}` : ""}.`
   : `Gratis ongkos kirim${c.min_purchase ? ` untuk belanja min. ${formatRupiah(c.min_purchase)}` : ""}.`;
 const label = (t: string) => (t === "PERCENT" ? "DISKON PERSEN" : t === "FIXED" ? "POTONGAN HARGA" : "GRATIS ONGKIR");
+
+const promoText = (p: { benefit_type: string | null; benefit_value: number; max_discount: number | null; min_purchase: number; scope_type: string }) => {
+  if (!p.benefit_type) return null;
+  const benefit = p.benefit_type === "PERCENT" ? `Diskon ${p.benefit_value}%${p.max_discount ? ` (maks. ${formatRupiah(p.max_discount)} per buku)` : ""}` : `Potongan ${formatRupiah(p.benefit_value)} per buku`;
+  const scope = p.scope_type === "ALL" ? "untuk semua buku" : "untuk buku pilihan";
+  return `${benefit} ${scope}${p.min_purchase > 0 ? `, min. belanja ${formatRupiah(p.min_purchase)}` : ""}. Berlaku otomatis di keranjang.`;
+};
 
 export default async function Promo() {
   const supabase = await createSupabaseServer();
@@ -28,10 +37,13 @@ export default async function Promo() {
     supabase.from("books").select(BOOK_SELECT).eq("status", "PUBLISHED").not("sale_price", "is", null).order("sold_count", { ascending: false }).limit(8),
     getSavedIds(),
   ]);
+  const now = new Date();
+  const liveCampaigns = (promos ?? []).filter((p) => inWindow(p.starts_at, p.ends_at, now)); // never show expired/future campaigns as active
+  const pricedBooks = await attachPromos((books ?? []) as unknown as BookRow[]);
   return (
     <>
       <PageHeader title="Promo Pendidikan & Paket Hemat Belajar" subtitle="Kupon, paket buku hemat, dan buku diskon pilihan." crumbs={[{ href: "/", label: "Beranda" }, { label: "Promo" }]} />
-      {promos?.map((p) => <div key={p.id} className="panel mb-4 p-4"><p className="font-serif text-lg font-semibold text-brand-dark">{p.title}</p><p className="text-sm text-ink-soft">{p.description}</p>{p.ends_at && <p className="mt-1 text-xs text-ink-mute">Berlaku hingga {new Date(p.ends_at).toLocaleDateString("id-ID", { dateStyle: "long" })}</p>}</div>)}
+      {liveCampaigns.map((p) => <div key={p.id} className="panel mb-4 p-4"><p className="font-serif text-lg font-semibold text-brand-dark">{p.title}</p><p className="text-sm text-ink-soft">{p.description}</p>{promoText(p) && <p className="mt-1 text-sm font-medium text-leaf">{promoText(p)}</p>}{p.ends_at && <p className="mt-1 text-xs text-ink-mute">Berlaku hingga {new Date(p.ends_at).toLocaleDateString("id-ID", { dateStyle: "long" })}</p>}</div>)}
 
       {!!coupons?.length && <section className="mt-8"><h2 className="text-2xl">Kupon & Voucher</h2><p className="mb-4 mt-1 text-sm text-ink-soft">Gunakan kode saat checkout.</p>
         <div className="grid gap-4 md:grid-cols-3">{coupons.map((c) => (
@@ -50,7 +62,7 @@ export default async function Promo() {
         <p className="panel mt-4 p-3 text-xs text-ink-soft"><strong>Catatan sistem:</strong> harga paket otomatis terpotong di keranjang saat semua judul buku dalam paket dimasukkan. Satu paket terbaik berlaku per pesanan.</p></section>
 
       <section className="mt-12"><div className="mb-4 flex items-end justify-between"><div><h2 className="text-2xl">Buku Diskon Pilihan</h2><p className="mt-1 text-sm text-ink-soft">Harga spesial untuk judul terlaris.</p></div><Link href="/books?sort=popular" className="text-sm font-semibold text-brand hover:underline">Lihat semua</Link></div>
-        {!books?.length ? <p className="card p-8 text-center text-ink-soft">Belum ada buku diskon.</p> : <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{(books as unknown as BookRow[]).map((b) => <BookCard key={b.id} book={b} saved={saved.has(b.id)} />)}</div>}</section>
+        {!books?.length ? <p className="card p-8 text-center text-ink-soft">Belum ada buku diskon.</p> : <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{pricedBooks.map((b) => <BookCard key={b.id} book={b} saved={saved.has(b.id)} />)}</div>}</section>
       <p className="mt-10 flex items-center gap-2 text-xs text-ink-mute"><Gift aria-hidden className="h-4 w-4" />Syarat dan ketentuan setiap kupon ditampilkan pada kartu kupon.</p>
     </>
   );

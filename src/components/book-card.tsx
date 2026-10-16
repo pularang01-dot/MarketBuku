@@ -3,6 +3,7 @@ import Image from "next/image";
 import { Star } from "lucide-react";
 import type { BookRow } from "@/types";
 import { formatRupiah } from "@/lib/utils";
+import { displayPrice, discountPercent } from "@/lib/book-price";
 import { WishlistButton } from "./wishlist-button";
 import { QuickAdd } from "./quick-add";
 
@@ -17,7 +18,8 @@ export function stockInfo(b: BookRow) {
 
 export function BookCard({ book, saved = false, note }: { book: BookRow; saved?: boolean; note?: string }) {
   const s = stockInfo(book);
-  const disc = book.sale_price != null && book.sale_price < book.price ? Math.round((1 - book.sale_price / book.price) * 100) : 0;
+  const eff = displayPrice(book);
+  const disc = discountPercent(book);
   const chip = [book.grade?.name, book.level?.name].filter(Boolean)[0];
   return (
     <article className="card group relative flex flex-col p-3 transition hover:shadow-float">
@@ -32,6 +34,7 @@ export function BookCard({ book, saved = false, note }: { book: BookRow; saved?:
       <div className="mt-3 flex flex-wrap gap-1.5">
         {chip && <span className="badge bg-brand-light text-brand">{chip}</span>}
         <span className={`badge ${s.tone}`}>{s.label}</span>
+        {book.promo && <span className="badge max-w-[140px] truncate bg-marigold-light text-marigold-dark" title={book.promo.title}>{book.promo.title}</span>}
       </div>
       <Link href={`/books/${book.slug}`} className="mt-2 line-clamp-2 font-serif text-[17px] font-semibold leading-snug text-brand-dark hover:text-brand">{book.title}</Link>
       <p className="mt-0.5 line-clamp-1 text-xs text-ink-soft">{book.author?.name ?? "—"}</p>
@@ -39,7 +42,7 @@ export function BookCard({ book, saved = false, note }: { book: BookRow; saved?:
       <div className="mt-auto flex items-end justify-between gap-2 pt-3">
         <div className="leading-tight">
           {disc > 0 && <p className="text-xs text-ink-mute line-through">{formatRupiah(book.price)}</p>}
-          <p className="text-base font-bold text-brand">{formatRupiah(disc > 0 ? book.sale_price! : book.price)}</p>
+          <p className="text-base font-bold text-brand">{formatRupiah(eff)}</p>
         </div>
         <QuickAdd bookId={book.id} disabled={s.out} />
       </div>
